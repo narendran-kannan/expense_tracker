@@ -1,8 +1,7 @@
 import { auth, signOut } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import {
-  getTransactions,
-  getTransactionsForYear,
+  getSpreadTransactionsForRange,
   getAvailableYears,
   getBudgetForMonth,
   getCachedInsight,
@@ -121,11 +120,20 @@ export default async function AnalyticsPage({
     }
 
     const monthlyPeriod: Period = { type: "month", year, month };
+    const monthStart = new Date(year, month, 1);
+    const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999);
+    const prevMonthStart = new Date(prevYear, prevMonth, 1);
+    const prevMonthEnd = new Date(prevYear, prevMonth + 1, 0, 23, 59, 59, 999);
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+    const prevYearStart = new Date(year - 1, 0, 1);
+    const prevYearEnd = new Date(year - 1, 11, 31, 23, 59, 59, 999);
+
     const [currentTxns, prevTxns, yearTxns, prevYearTxns, budget, cachedInsight] = await Promise.all([
-      getTransactions(month, year),
-      getTransactions(prevMonth, prevYear),
-      getTransactionsForYear(year),
-      getTransactionsForYear(year - 1),
+      getSpreadTransactionsForRange(monthStart, monthEnd),
+      getSpreadTransactionsForRange(prevMonthStart, prevMonthEnd),
+      getSpreadTransactionsForRange(yearStart, yearEnd),
+      getSpreadTransactionsForRange(prevYearStart, prevYearEnd),
       getBudgetForMonth(month, year),
       getCachedInsight(monthlyPeriod),
     ]);
@@ -250,8 +258,14 @@ export default async function AnalyticsPage({
   }
 
   const [yearTxns, prevYearTxns] = await Promise.all([
-    getTransactionsForYear(year),
-    getTransactionsForYear(year - 1),
+    getSpreadTransactionsForRange(
+      new Date(year, 0, 1),
+      new Date(year, 11, 31, 23, 59, 59, 999)
+    ),
+    getSpreadTransactionsForRange(
+      new Date(year - 1, 0, 1),
+      new Date(year - 1, 11, 31, 23, 59, 59, 999)
+    ),
   ]);
 
   const yearSerialized = serialize(yearTxns);

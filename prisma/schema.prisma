@@ -40,6 +40,10 @@ model Transaction {
   counterparty        String?
   recovery_status     String?
   group_id            String?
+  is_emi              Boolean     @default(false)
+  emi_tenure_months   Int?
+  emi_monthly_amount  Float?
+  emi_start_date      DateTime?
   repayments          Repayment[]
   created_at          DateTime    @default(now())
   updated_at          DateTime    @updatedAt
@@ -49,6 +53,7 @@ model Transaction {
   @@index([subcategoryId])
   @@index([recovery_status, counterparty])
   @@index([group_id])
+  @@index([is_emi, emi_start_date])
 }
 
 model Repayment {

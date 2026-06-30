@@ -14,6 +14,7 @@ Built with Next.js 16, React 19, Prisma, and Tailwind CSS.
 - **Manual entry** — Add transactions manually when needed
 - **Monthly dashboard** — Summary cards, category breakdown pie chart, and daily spending bar chart
 - **Credit card payment tracking** — CC payments are tracked separately and excluded from spend totals to avoid double-counting
+- **EMI spreading** — Convert a credit-card purchase into an EMI to recognize its cost evenly across the tenure instead of as one upfront spike; future/past months show projected installments. The CC bill payment stays excluded, so each rupee is counted once
 - **Duplicate detection** — Deduplicates by email message ID and flags potential same-day/amount/merchant matches
 - **Custom categories** — Create new categories on the fly
 - **Single-user auth** — Simple password-based authentication via NextAuth v5

@@ -3,7 +3,49 @@ import { type Period, periodBounds } from "@/lib/insights-period";
 import {
   computeStatsFromTransactions,
   type InsightStats,
+  type InsightStatsTransaction,
 } from "@/lib/insights-stats-pure";
+import { expandTransactionsForRange } from "@/lib/emi";
+
+const EMI_SELECT = {
+  amount: true,
+  merchant: true,
+  category: true,
+  date: true,
+  is_cc_payment: true,
+  needs_review: true,
+  recoverable_amount: true,
+  recovery_status: true,
+  repayments: { select: { amount: true } },
+  is_emi: true,
+  emi_tenure_months: true,
+  emi_monthly_amount: true,
+  emi_start_date: true,
+} as const;
+
+/**
+ * Fetch transactions whose effective spend touches [start, end]:
+ * - rows actually dated within the range, plus
+ * - EMI purchases that started before the range but whose installment window
+ *   still overlaps it.
+ * Then expand EMI rows into per-month installments clipped to the range.
+ */
+async function getSpreadTransactions(
+  start: Date,
+  end: Date
+): Promise<InsightStatsTransaction[]> {
+  const rows = await prisma.transaction.findMany({
+    where: {
+      OR: [
+        { date: { gte: start, lte: end } },
+        { is_emi: true, emi_start_date: { lt: start } },
+      ],
+    },
+    select: EMI_SELECT,
+  });
+
+  return expandTransactionsForRange(rows, start, end);
+}
 
 export type {
   InsightStats,
@@ -23,34 +65,8 @@ export async function computeInsightStats(
   const { start, end, previousStart, previousEnd } = periodBounds(period);
 
   const [current, previous] = await Promise.all([
-    prisma.transaction.findMany({
-      where: { date: { gte: start, lte: end } },
-      select: {
-        amount: true,
-        merchant: true,
-        category: true,
-        date: true,
-        is_cc_payment: true,
-        needs_review: true,
-        recoverable_amount: true,
-        recovery_status: true,
-        repayments: { select: { amount: true } },
-      },
-    }),
-    prisma.transaction.findMany({
-      where: { date: { gte: previousStart, lte: previousEnd } },
-      select: {
-        amount: true,
-        merchant: true,
-        category: true,
-        date: true,
-        is_cc_payment: true,
-        needs_review: true,
-        recoverable_amount: true,
-        recovery_status: true,
-        repayments: { select: { amount: true } },
-      },
-    }),
+    getSpreadTransactions(start, end),
+    getSpreadTransactions(previousStart, previousEnd),
   ]);
 
   return computeStatsFromTransactions(period, current, previous);

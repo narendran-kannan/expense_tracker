@@ -52,6 +52,33 @@ npm run db:backfill-categories
 - Historical `subcategoryId` values are not inferred automatically.
 - It is safe to re-run category sync and backfill scripts.
 
+## Upgrading to EMI spreading support
+
+This release adds the ability to convert a credit-card purchase into an EMI so its cost is recognized evenly across the tenure instead of as one upfront spike.
+
+It adds these columns to `Transaction`:
+
+- `is_emi` (boolean, default `false`)
+- `emi_tenure_months`
+- `emi_monthly_amount`
+- `emi_start_date`
+
+### Required steps
+
+1. Deploy code that contains the Prisma migration files.
+2. Run schema migrations:
+
+```bash
+npx prisma migrate deploy
+```
+
+### Notes
+
+- This is a purely additive migration (new nullable columns plus one boolean defaulting to `false`). **No data backfill is required.**
+- Existing transactions are unaffected: they default to `is_emi = false` and behave exactly as before.
+- EMI and recoverable status are mutually exclusive; converting a transaction to EMI clears any recoverable tracking and its repayments.
+- EMI installments are computed, not stored: the original purchase row is the source of truth, and analytics/insights/dashboard spread it across months on read. The credit-card bill payment stays excluded to avoid double-counting.
+
 ## Deployment sequencing
 
 Use this order for upgrades:

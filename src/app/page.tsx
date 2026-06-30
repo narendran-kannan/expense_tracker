@@ -7,6 +7,7 @@ import {
   getBudgetForMonth,
   getTotalOutstanding,
   getKnownCounterparties,
+  getEmiInstallmentsForMonth,
 } from "./actions";
 import { effectiveSpend } from "@/lib/recoverable";
 import { OutstandingCard } from "@/components/outstanding-card";
@@ -55,6 +56,7 @@ export default async function Dashboard({
     budget,
     outstanding,
     knownCounterparties,
+    emiInstallments,
   ] = await Promise.all([
     getTransactions(month, year),
     getCategoriesWithSubs(),
@@ -62,6 +64,7 @@ export default async function Dashboard({
     getBudgetForMonth(month, year),
     getTotalOutstanding(),
     getKnownCounterparties(),
+    getEmiInstallmentsForMonth(month, year),
   ] as const);
 
   const spendingTxns = transactions
@@ -69,12 +72,16 @@ export default async function Dashboard({
     .map((t) => ({ t, effective: effectiveSpend(t) }))
     .filter((entry) => entry.effective > 0);
 
-  const totalSpend = spendingTxns.reduce(
-    (sum, entry) => sum + entry.effective,
+  const emiInstallmentTotal = emiInstallments.reduce(
+    (sum, i) => sum + i.amount,
     0
   );
 
-  const totalTransactions = spendingTxns.length;
+  const totalSpend =
+    spendingTxns.reduce((sum, entry) => sum + entry.effective, 0) +
+    emiInstallmentTotal;
+
+  const totalTransactions = spendingTxns.length + emiInstallments.length;
   const pendingReviews = transactions.filter((t) => t.needs_review).length;
   const avgTransaction =
     totalTransactions > 0 ? totalSpend / totalTransactions : 0;
@@ -82,6 +89,7 @@ export default async function Dashboard({
   const serialized = transactions.map((t) => ({
     ...t,
     date: t.date.toISOString(),
+    emi_start_date: t.emi_start_date ? t.emi_start_date.toISOString() : null,
     subcategory: t.subcategoryRef?.name ?? null,
     repayments: t.repayments.map((r) => ({
       id: r.id,
@@ -93,21 +101,36 @@ export default async function Dashboard({
     })),
   }));
 
-  // For charts, use the effective spend amount so recoverables don't inflate
-  // category/day totals. Fully-recovered transactions are filtered out.
-  const chartData = transactions
-    .map((t) => ({
-      id: t.id,
-      amount: effectiveSpend(t),
-      merchant: t.merchant,
-      date: t.date.toISOString(),
-      category: t.category,
-      subcategory: t.subcategoryRef?.name ?? null,
-      is_cc_payment: t.is_cc_payment,
-      confidence_score: t.confidence_score,
-      needs_review: t.needs_review,
-    }))
-    .filter((t) => t.amount > 0 || t.is_cc_payment);
+  // For charts, use the effective spend amount so recoverables/EMIs don't
+  // inflate category/day totals. Fully-recovered transactions are filtered out.
+  // Virtual EMI installments are appended so future/past months reflect
+  // committed EMI spend.
+  const chartData = [
+    ...transactions
+      .map((t) => ({
+        id: t.id,
+        amount: effectiveSpend(t),
+        merchant: t.merchant,
+        date: t.date.toISOString(),
+        category: t.category,
+        subcategory: t.subcategoryRef?.name ?? null,
+        is_cc_payment: t.is_cc_payment,
+        confidence_score: t.confidence_score,
+        needs_review: t.needs_review,
+      }))
+      .filter((t) => t.amount > 0 || t.is_cc_payment),
+    ...emiInstallments.map((i) => ({
+      id: i.id,
+      amount: i.amount,
+      merchant: i.merchant,
+      date: i.date,
+      category: i.category,
+      subcategory: i.subcategory,
+      is_cc_payment: false,
+      confidence_score: 1,
+      needs_review: false,
+    })),
+  ];
 
   const serializedSkipped = skippedEmails.map((s) => ({
     ...s,
@@ -269,6 +292,7 @@ export default async function Dashboard({
               transactions={serialized}
               categories={categories}
               knownCounterparties={knownCounterparties}
+              emiInstallments={emiInstallments}
             />
           </TabsContent>
           <TabsContent value="skipped" className="mt-4">

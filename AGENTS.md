@@ -63,7 +63,7 @@ src/
   middleware.ts           # auth guard — allows /login, /api/auth, /api/process-emails, /api/seed
   generated/prisma/       # gitignored Prisma client output
 prisma/
-  schema.prisma           # 4 models: Category, Transaction, Budget, SkippedEmail
+  schema.prisma           # 6 models: Category, Transaction, Repayment, Budget, SkippedEmail, Insight
   migrations/             # committed; required for prod
 scripts/
   sync-categories.mjs       # run by npm build
@@ -81,6 +81,7 @@ scripts/
 - Prisma `Date` → serialize to ISO string before passing to client components.
 - Currency/locale: `Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" })` everywhere.
 - CC payments excluded from spend totals: `filter(t => !t.is_cc_payment)`. Don't double-count.
+- EMI purchases (`is_emi`): the original lump-sum row is the source of truth; cost is spread across `emi_tenure_months` on read, never as stored installment rows. `effectiveSpend()` returns the start-month installment for an EMI row; later months come from `expandTransactionsForRange()` (analytics/insights) or `getEmiInstallmentsForMonth()` (dashboard). EMI installments are NOT `is_cc_payment` — the CC bill exclusion still applies to the bill payment, so each rupee counts once. EMI and recoverable are mutually exclusive. See `src/lib/emi.ts`.
 - Transactions with `confidence_score < 0.8` get `needs_review: true` (auto-flagged).
 - Dedup: by `email_message_id` (unique constraint) + `idx_dedup` on `(amount, merchant, date)`.
 

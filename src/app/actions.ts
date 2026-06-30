@@ -19,6 +19,12 @@ import {
   sumRepayments,
   type RecoveryStatus,
 } from "@/lib/recoverable";
+import {
+  defaultMonthlyAmount,
+  emiInstallmentForMonth,
+  hasVirtualInstallmentForMonth,
+  installmentIndexForMonth,
+} from "@/lib/emi";
 
 export interface CategoryWithSubs {
   id: string;
@@ -1278,6 +1284,166 @@ export async function getTotalOutstanding(): Promise<{
   }
 
   return { total, counterpartyCount: counterparties.size };
+}
+
+// ---------- EMI transactions ----------
+
+export async function markAsEmi(
+  transactionId: string,
+  data: {
+    tenureMonths: number;
+    monthlyAmount?: number;
+    startDate?: string;
+  }
+) {
+  const tenure = Math.trunc(data.tenureMonths);
+  if (!Number.isFinite(tenure) || tenure < 2) {
+    throw new Error("EMI tenure must be at least 2 months");
+  }
+
+  const tx = await prisma.transaction.findUnique({
+    where: { id: transactionId },
+  });
+  if (!tx) throw new Error("Transaction not found");
+  if (tx.is_cc_payment) {
+    throw new Error("Credit card payments cannot be converted to EMI");
+  }
+
+  const monthly =
+    data.monthlyAmount !== undefined && data.monthlyAmount > 0
+      ? data.monthlyAmount
+      : defaultMonthlyAmount(tx.amount, tenure);
+
+  const startDate = data.startDate ? new Date(data.startDate) : tx.date;
+
+  await prisma.transaction.update({
+    where: { id: transactionId },
+    data: {
+      is_emi: true,
+      emi_tenure_months: tenure,
+      emi_monthly_amount: monthly,
+      emi_start_date: startDate,
+      // EMI and recoverable are mutually exclusive.
+      recoverable_amount: null,
+      counterparty: null,
+      recovery_status: null,
+    },
+  });
+
+  await prisma.repayment.deleteMany({
+    where: { transaction_id: transactionId },
+  });
+
+  await revalidateAppPaths();
+}
+
+export async function unmarkEmi(transactionId: string) {
+  await prisma.transaction.update({
+    where: { id: transactionId },
+    data: {
+      is_emi: false,
+      emi_tenure_months: null,
+      emi_monthly_amount: null,
+      emi_start_date: null,
+    },
+  });
+  await revalidateAppPaths();
+}
+
+export interface EmiInstallmentDTO {
+  id: string;
+  sourceId: string;
+  amount: number;
+  merchant: string;
+  date: string;
+  category: string;
+  subcategory: string | null;
+  installmentNumber: number;
+  tenureMonths: number;
+  isEmiInstallment: true;
+}
+
+/**
+ * Virtual EMI installment line items for a month. These are NOT stored rows —
+ * they are projections of EMI purchases that started in an earlier month and
+ * whose tenure window covers (month, year). The purchase's own start month is
+ * represented by the real transaction row, so it is excluded here.
+ */
+/**
+ * Transactions for [startDate, endDate] with EMI purchases spread into per-month
+ * installments (clipped to the range). Includes EMIs that started before the
+ * range but whose window overlaps it. Shapes the result like the include-based
+ * queries so analytics `serialize`/`computeStats` work unchanged.
+ */
+export async function getSpreadTransactionsForRange(
+  startDate: Date,
+  endDate: Date
+) {
+  const { expandTransactionsForRange } = await import("@/lib/emi");
+
+  const rows = await prisma.transaction.findMany({
+    where: {
+      OR: [
+        { date: { gte: startDate, lte: endDate } },
+        { is_emi: true, emi_start_date: { lt: startDate } },
+      ],
+    },
+    orderBy: { date: "asc" },
+    include: {
+      categoryRef: true,
+      subcategoryRef: true,
+      repayments: { orderBy: { date: "asc" } },
+    },
+  });
+
+  return expandTransactionsForRange(rows, startDate, endDate);
+}
+
+export async function getEmiInstallmentsForMonth(
+  month: number,
+  year: number
+): Promise<EmiInstallmentDTO[]> {
+  const startOfMonth = new Date(year, month, 1);
+
+  const candidates = await prisma.transaction.findMany({
+    where: {
+      is_emi: true,
+      emi_start_date: { lt: startOfMonth },
+    },
+    include: { subcategoryRef: true },
+  });
+
+  const installments: EmiInstallmentDTO[] = [];
+  for (const tx of candidates) {
+    const input = {
+      amount: tx.amount,
+      is_emi: tx.is_emi,
+      emi_tenure_months: tx.emi_tenure_months,
+      emi_monthly_amount: tx.emi_monthly_amount,
+      emi_start_date: tx.emi_start_date,
+      date: tx.date,
+    };
+    if (!hasVirtualInstallmentForMonth(input, month, year)) continue;
+
+    const index = installmentIndexForMonth(input, month, year);
+    const amount = emiInstallmentForMonth(input, month, year);
+    if (amount <= 0) continue;
+
+    installments.push({
+      id: `emi-${tx.id}-${index}`,
+      sourceId: tx.id,
+      amount,
+      merchant: tx.merchant,
+      date: new Date(year, month, Math.min(tx.date.getDate(), 28)).toISOString(),
+      category: tx.category,
+      subcategory: tx.subcategoryRef?.name ?? null,
+      installmentNumber: index + 1,
+      tenureMonths: tx.emi_tenure_months as number,
+      isEmiInstallment: true,
+    });
+  }
+
+  return installments;
 }
 
 export async function getKnownCounterparties(): Promise<string[]> {

@@ -5,12 +5,15 @@ import {
   updateTransaction,
   deleteTransaction,
   markRecoverable,
+  markAsEmi,
+  unmarkEmi,
   cloneTransaction,
   groupTransactions,
   ungroupAll,
 } from "@/app/actions";
 import { effectiveSpend, RECOVERY_STATUS } from "@/lib/recoverable";
-import type { SerializedRepayment } from "@/app/actions";
+import { defaultMonthlyAmount } from "@/lib/emi";
+import type { SerializedRepayment, EmiInstallmentDTO } from "@/app/actions";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +48,7 @@ import {
 import { CategorySelect } from "@/components/category-select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  CalendarClock,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -81,6 +85,10 @@ interface Transaction {
   counterparty?: string | null;
   group_id?: string | null;
   repayments?: SerializedRepayment[];
+  is_emi?: boolean | null;
+  emi_tenure_months?: number | null;
+  emi_monthly_amount?: number | null;
+  emi_start_date?: string | null;
 }
 
 function txEffectiveSpend(t: Transaction) {
@@ -89,6 +97,11 @@ function txEffectiveSpend(t: Transaction) {
     recoverable_amount: t.recoverable_amount ?? null,
     recovery_status: t.recovery_status ?? null,
     repayments: t.repayments,
+    is_emi: t.is_emi ?? null,
+    emi_tenure_months: t.emi_tenure_months ?? null,
+    emi_monthly_amount: t.emi_monthly_amount ?? null,
+    emi_start_date: t.emi_start_date ?? null,
+    date: t.date,
   });
 }
 
@@ -119,10 +132,12 @@ export function TransactionTable({
   transactions,
   categories,
   knownCounterparties = [],
+  emiInstallments = [],
 }: {
   transactions: Transaction[];
   categories: { name: string; subcategories: { id: string; name: string }[] }[];
   knownCounterparties?: string[];
+  emiInstallments?: EmiInstallmentDTO[];
 }) {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>(ALL_VALUE);
@@ -475,6 +490,59 @@ export function TransactionTable({
             </TableBody>
           </Table>
         )}
+
+        {emiInstallments.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-dashed bg-muted/20 p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                EMI installments this month
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {formatINR(
+                  emiInstallments.reduce((sum, i) => sum + i.amount, 0)
+                )}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Projected from purchases bought on EMI in earlier months. Counted
+              in your spend total but paid via your credit card bill (excluded
+              separately to avoid double-counting).
+            </p>
+            <Table>
+              <TableBody>
+                {emiInstallments.map((i) => (
+                  <TableRow key={i.id} className="text-muted-foreground">
+                    <TableCell>
+                      {new Date(i.date).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </TableCell>
+                    <TableCell>{i.merchant}</TableCell>
+                    <TableCell className="font-medium text-foreground">
+                      {formatINR(i.amount)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {i.subcategory
+                          ? `${i.category} / ${i.subcategory}`
+                          : i.category}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant="secondary" className="text-xs">
+                        <CalendarClock className="mr-1 h-3 w-3" />
+                        EMI {i.installmentNumber}/{i.tenureMonths}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -511,10 +579,31 @@ function TransactionRow({
   const [recoverableAmt, setRecoverableAmt] = useState(
     t.recoverable_amount != null ? String(t.recoverable_amount) : String(t.amount)
   );
+  const [emiOpen, setEmiOpen] = useState(false);
+  const [emiTenure, setEmiTenure] = useState(
+    t.emi_tenure_months != null ? String(t.emi_tenure_months) : "6"
+  );
+  const [emiMonthly, setEmiMonthly] = useState(() =>
+    t.emi_monthly_amount != null
+      ? String(t.emi_monthly_amount)
+      : String(defaultMonthlyAmount(t.amount, 6))
+  );
+  const [emiStart, setEmiStart] = useState(() =>
+    toDateInputValue(t.emi_start_date ?? t.date)
+  );
   const [isPending, startTransition] = useTransition();
 
   const isRecoverable = t.recoverable_amount != null;
   const status = t.recovery_status ?? null;
+  const isEmiTxn = t.is_emi === true && t.emi_tenure_months != null;
+
+  function handleTenureChange(value: string) {
+    setEmiTenure(value);
+    const tenure = parseInt(value, 10);
+    if (Number.isFinite(tenure) && tenure >= 1) {
+      setEmiMonthly(String(defaultMonthlyAmount(t.amount, tenure)));
+    }
+  }
 
   function handleSave() {
     startTransition(async () => {
@@ -613,15 +702,17 @@ function TransactionRow({
               <div className="mt-1 text-xs text-muted-foreground">
                 Effective:{" "}
                 <span className="font-medium text-foreground">
-                  {formatINR(
-                    effectiveSpend({
-                      amount: t.amount,
-                      recoverable_amount: t.recoverable_amount ?? null,
-                      recovery_status: t.recovery_status ?? null,
-                      repayments: t.repayments,
-                    })
-                  )}
+                  {formatINR(txEffectiveSpend(t))}
                 </span>
+              </div>
+            )}
+            {isEmiTxn && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                This month:{" "}
+                <span className="font-medium text-foreground">
+                  {formatINR(txEffectiveSpend(t))}
+                </span>{" "}
+                · {t.emi_tenure_months}-mo EMI
               </div>
             )}
           </>
@@ -666,6 +757,12 @@ function TransactionRow({
             <Badge variant="destructive">Needs Review</Badge>
           ) : (
             <Badge variant="default">Verified</Badge>
+          )}
+          {isEmiTxn && (
+            <Badge variant="secondary" className="text-xs">
+              <CalendarClock className="mr-1 h-3 w-3" />
+              EMI · {t.emi_tenure_months} mo
+            </Badge>
           )}
           {isRecoverable && (
             <Link
@@ -731,7 +828,7 @@ function TransactionRow({
               >
                 <Copy className="h-4 w-4" />
               </Button>
-              {!isRecoverable && !t.is_cc_payment && (
+              {!isRecoverable && !isEmiTxn && !t.is_cc_payment && (
                 <Button
                   size="icon"
                   variant="ghost"
@@ -741,6 +838,28 @@ function TransactionRow({
                   disabled={isPending}
                 >
                   <HandCoins className="h-4 w-4" />
+                </Button>
+              )}
+              {!isRecoverable && !t.is_cc_payment && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={() => {
+                    if (isEmiTxn) {
+                      startTransition(() => unmarkEmi(t.id));
+                    } else {
+                      setEmiOpen(true);
+                    }
+                  }}
+                  title={
+                    isEmiTxn
+                      ? "Remove EMI (revert to a single expense)"
+                      : "Convert to EMI (spread over months)"
+                  }
+                  disabled={isPending}
+                >
+                  <CalendarClock className="h-4 w-4" />
                 </Button>
               )}
               <AlertDialog>
@@ -877,6 +996,90 @@ function TransactionRow({
                 }
               >
                 Mark recoverable
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={emiOpen} onOpenChange={setEmiOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Convert to EMI</DialogTitle>
+              <DialogDescription>
+                Spread this {formatINR(t.amount)} purchase from {t.merchant}{" "}
+                across monthly installments. Each month recognizes one
+                installment instead of the full amount upfront. The actual
+                payments ride your credit card bill, which stays excluded.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor={`emi-tenure-${t.id}`}>Tenure (months)</Label>
+                <Input
+                  id={`emi-tenure-${t.id}`}
+                  type="number"
+                  min="2"
+                  step="1"
+                  value={emiTenure}
+                  onChange={(e) => handleTenureChange(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`emi-monthly-${t.id}`}>
+                  Monthly installment (₹)
+                </Label>
+                <Input
+                  id={`emi-monthly-${t.id}`}
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={emiMonthly}
+                  onChange={(e) => setEmiMonthly(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Pre-filled as a no-cost even split ({formatINR(t.amount)} ÷
+                  tenure). Override it for the actual installment if needed.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor={`emi-start-${t.id}`}>First installment</Label>
+                <Input
+                  id={`emi-start-${t.id}`}
+                  type="date"
+                  value={emiStart}
+                  onChange={(e) => setEmiStart(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEmiOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  const tenure = parseInt(emiTenure, 10);
+                  const monthly = parseFloat(emiMonthly);
+                  if (!Number.isFinite(tenure) || tenure < 2) return;
+                  startTransition(async () => {
+                    await markAsEmi(t.id, {
+                      tenureMonths: tenure,
+                      monthlyAmount:
+                        Number.isFinite(monthly) && monthly > 0
+                          ? monthly
+                          : undefined,
+                      startDate: emiStart
+                        ? new Date(emiStart).toISOString()
+                        : undefined,
+                    });
+                    setEmiOpen(false);
+                  });
+                }}
+                disabled={
+                  isPending ||
+                  !Number.isFinite(parseInt(emiTenure, 10)) ||
+                  parseInt(emiTenure, 10) < 2
+                }
+              >
+                Convert to EMI
               </Button>
             </DialogFooter>
           </DialogContent>

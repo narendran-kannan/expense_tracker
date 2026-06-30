@@ -22,6 +22,8 @@ export function isRecoveryStatus(value: unknown): value is RecoveryStatus {
   );
 }
 
+import { isEmi, emiSpendForStartMonth, type EmiInput } from "./emi";
+
 export interface RecoverableInput {
   amount: number;
   recoverable_amount: number | null;
@@ -54,7 +56,11 @@ export function outstandingAmount(t: RecoverableInput): number {
  *   If recoverable_amount < amount (only part of the spend was lent), the
  *   non-recoverable portion always counts; only the recoverable portion shrinks.
  */
-export function effectiveSpend(t: RecoverableInput): number {
+export function effectiveSpend(t: RecoverableInput & EmiInput): number {
+  // EMI purchases recognize only the start-month installment here; later
+  // installments surface as virtual line items. EMI and recoverable are
+  // mutually exclusive, so EMI takes precedence when both are somehow set.
+  if (isEmi(t)) return emiSpendForStartMonth(t);
   if (t.recoverable_amount == null) return t.amount;
   if (t.recovery_status === RECOVERY_STATUS.RECOVERED) {
     return Math.max(0, t.amount - t.recoverable_amount);
