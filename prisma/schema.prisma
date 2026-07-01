@@ -80,6 +80,34 @@ model Budget {
   @@index([start_year, start_month])
 }
 
+model BudgetOverage {
+  id             String           @id @default(uuid())
+  month          Int
+  year           Int
+  override_amount Float?
+  owed_to        String?
+  status         String           @default("outstanding")
+  payments       OveragePayment[]
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
+
+  @@unique([month, year])
+  @@index([year, month])
+  @@index([status])
+}
+
+model OveragePayment {
+  id         String        @id @default(uuid())
+  overage_id String
+  overage    BudgetOverage @relation(fields: [overage_id], references: [id], onDelete: Cascade)
+  amount     Float
+  date       DateTime
+  note       String?
+  created_at DateTime      @default(now())
+
+  @@index([overage_id])
+}
+
 model SkippedEmail {
   id               String   @id @default(uuid())
   email_message_id String   @unique

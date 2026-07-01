@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Menu,
   Upload,
+  Wallet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +34,7 @@ const PRIMARY_NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/recoverables", label: "Recoverables", icon: HandCoins },
+  { href: "/carryover", label: "Carryover", icon: Wallet },
 ];
 
 const MORE_NAV_ITEMS = [

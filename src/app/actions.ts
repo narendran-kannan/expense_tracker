@@ -25,6 +25,15 @@ import {
   hasVirtualInstallmentForMonth,
   installmentIndexForMonth,
 } from "@/lib/emi";
+import {
+  OVERAGE_STATUS,
+  allocateWaterfall,
+  computeOverageStatus,
+  grossOverage,
+  outstandingOverage,
+  sumPayments,
+} from "@/lib/overage";
+import { effectiveSpend } from "@/lib/recoverable";
 
 export interface CategoryWithSubs {
   id: string;
@@ -37,6 +46,7 @@ async function revalidateAppPaths() {
   revalidatePath("/analytics");
   revalidatePath("/categories");
   revalidatePath("/recoverables");
+  revalidatePath("/carryover");
 }
 
 export async function getTransactions(month?: number, year?: number) {
@@ -1456,4 +1466,369 @@ export async function getKnownCounterparties(): Promise<string[]> {
   return rows
     .map((r) => r.counterparty)
     .filter((c): c is string => c !== null);
+}
+
+// ---------- Budget overage / carryover ----------
+
+/**
+ * Effective spend for a single month, matching the dashboard's computation:
+ * real (non-CC) transactions via `effectiveSpend` (recoverable-aware) plus
+ * virtual EMI installments whose window covers the month. Each rupee counts once.
+ */
+export async function getEffectiveSpendForMonth(
+  month: number,
+  year: number
+): Promise<number> {
+  const [transactions, emiInstallments] = await Promise.all([
+    getTransactions(month, year),
+    getEmiInstallmentsForMonth(month, year),
+  ]);
+
+  const txnSpend = transactions
+    .filter((t) => !t.is_cc_payment)
+    .reduce((sum, t) => sum + effectiveSpend(t), 0);
+
+  const emiSpend = emiInstallments.reduce((sum, i) => sum + i.amount, 0);
+
+  return txnSpend + emiSpend;
+}
+
+/**
+ * Lazily create a BudgetOverage row for every CLOSED month that ran over budget
+ * and does not already have one. Idempotent: never touches existing rows (so
+ * manual overrides, owed_to labels, and payments are preserved), and never
+ * creates rows for the current/future month or for months with no budget.
+ */
+export async function syncClosedOverages(): Promise<void> {
+  const budgets = await prisma.budget.findMany({
+    orderBy: [{ start_year: "asc" }, { start_month: "asc" }],
+  });
+  if (budgets.length === 0) return;
+
+  const existing = await prisma.budgetOverage.findMany({
+    select: { month: true, year: true },
+  });
+  const have = new Set(existing.map((o) => `${o.year}-${o.month}`));
+
+  const now = new Date();
+  const earliest = budgets[0];
+  let cursor = new Date(earliest.start_year, earliest.start_month, 1);
+  const stop = new Date(now.getFullYear(), now.getMonth(), 1); // exclusive: current month
+
+  const toCreate: { month: number; year: number }[] = [];
+  while (cursor < stop) {
+    const month = cursor.getMonth();
+    const year = cursor.getFullYear();
+    if (!have.has(`${year}-${month}`)) {
+      const budget = await getBudgetForMonth(month, year);
+      if (budget) {
+        const spent = await getEffectiveSpendForMonth(month, year);
+        if (spent > budget.amount) {
+          toCreate.push({ month, year });
+        }
+      }
+    }
+    cursor = new Date(year, month + 1, 1);
+  }
+
+  if (toCreate.length > 0) {
+    await prisma.budgetOverage.createMany({
+      data: toCreate.map((c) => ({
+        month: c.month,
+        year: c.year,
+        status: OVERAGE_STATUS.OUTSTANDING,
+      })),
+      skipDuplicates: true,
+    });
+  }
+}
+
+export interface CarryoverMonthDTO {
+  id: string;
+  month: number;
+  year: number;
+  budget_amount: number;
+  spent_amount: number;
+  gross_overage: number;
+  override_amount: number | null;
+  owed_to: string | null;
+  outstanding: number;
+  paid: number;
+  status: string;
+  payments: {
+    id: string;
+    amount: number;
+    date: string;
+    note: string | null;
+    created_at: string;
+  }[];
+}
+
+export interface CarryoverSummary {
+  totalOutstanding: number;
+  totalOverage: number;
+  totalPaid: number;
+  months: CarryoverMonthDTO[];
+}
+
+/**
+ * Full carryover picture: every recorded over-budget month with its live-derived
+ * overage (or manual override), payments, outstanding balance, and status.
+ * Runs `syncClosedOverages` first so newly-closed months appear automatically.
+ */
+export async function getCarryoverSummary(): Promise<CarryoverSummary> {
+  await syncClosedOverages();
+
+  const rows = await prisma.budgetOverage.findMany({
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+    include: { payments: { orderBy: { date: "asc" } } },
+  });
+
+  const months: CarryoverMonthDTO[] = [];
+  for (const row of rows) {
+    const budget = await getBudgetForMonth(row.month, row.year);
+    const budgetAmount = budget?.amount ?? 0;
+    const spent = await getEffectiveSpendForMonth(row.month, row.year);
+
+    const gross = grossOverage({
+      override_amount: row.override_amount,
+      budget_amount: budgetAmount,
+      spent_amount: spent,
+    });
+    const paid = sumPayments(row.payments);
+    const outstanding = outstandingOverage({
+      override_amount: row.override_amount,
+      budget_amount: budgetAmount,
+      spent_amount: spent,
+      payments: row.payments,
+    });
+
+    months.push({
+      id: row.id,
+      month: row.month,
+      year: row.year,
+      budget_amount: budgetAmount,
+      spent_amount: spent,
+      gross_overage: gross,
+      override_amount: row.override_amount,
+      owed_to: row.owed_to,
+      outstanding,
+      paid,
+      status: computeOverageStatus(gross, paid),
+      payments: row.payments.map((p) => ({
+        id: p.id,
+        amount: p.amount,
+        date: p.date.toISOString(),
+        note: p.note,
+        created_at: p.created_at.toISOString(),
+      })),
+    });
+  }
+
+  const totalOutstanding = months.reduce((s, m) => s + m.outstanding, 0);
+  const totalOverage = months.reduce((s, m) => s + m.gross_overage, 0);
+  const totalPaid = months.reduce((s, m) => s + m.paid, 0);
+
+  return { totalOutstanding, totalOverage, totalPaid, months };
+}
+
+async function syncOverageStatus(overageId: string): Promise<void> {
+  const row = await prisma.budgetOverage.findUnique({
+    where: { id: overageId },
+    include: { payments: { select: { amount: true } } },
+  });
+  if (!row) return;
+
+  const budget = await getBudgetForMonth(row.month, row.year);
+  const spent = await getEffectiveSpendForMonth(row.month, row.year);
+  const gross = grossOverage({
+    override_amount: row.override_amount,
+    budget_amount: budget?.amount ?? 0,
+    spent_amount: spent,
+  });
+  const paid = sumPayments(row.payments);
+
+  await prisma.budgetOverage.update({
+    where: { id: overageId },
+    data: { status: computeOverageStatus(gross, paid) },
+  });
+}
+
+export async function addOveragePayment(
+  overageId: string,
+  data: { amount: number; date: string; note?: string | null }
+): Promise<void> {
+  if (data.amount <= 0) throw new Error("Payment amount must be positive");
+
+  const row = await prisma.budgetOverage.findUnique({
+    where: { id: overageId },
+  });
+  if (!row) throw new Error("Overage not found");
+
+  await prisma.overagePayment.create({
+    data: {
+      overage_id: overageId,
+      amount: data.amount,
+      date: new Date(data.date),
+      note: data.note?.trim() || null,
+    },
+  });
+  await syncOverageStatus(overageId);
+  await revalidateAppPaths();
+}
+
+export interface BulkPaymentPreviewItem {
+  id: string;
+  month: number;
+  year: number;
+  outstandingBefore: number;
+  applied: number;
+  outstandingAfter: number;
+}
+
+export interface BulkPaymentPreview {
+  items: BulkPaymentPreviewItem[];
+  totalApplied: number;
+  leftover: number;
+  totalOutstanding: number;
+}
+
+/**
+ * Ordered (oldest month first) outstanding balances for every recorded overage,
+ * used to drive the waterfall allocation. Excludes months with nothing owed.
+ */
+async function getOrderedOutstanding(): Promise<
+  { id: string; month: number; year: number; outstanding: number }[]
+> {
+  const summary = await getCarryoverSummary();
+  return summary.months
+    .filter((m) => m.outstanding > 0)
+    .map((m) => ({
+      id: m.id,
+      month: m.month,
+      year: m.year,
+      outstanding: m.outstanding,
+    }))
+    .sort((a, b) => a.year - b.year || a.month - b.month);
+}
+
+/**
+ * Preview how a lump-sum payment would waterfall across outstanding months
+ * (oldest first) without persisting anything.
+ */
+export async function previewBulkOveragePayment(
+  amount: number
+): Promise<BulkPaymentPreview> {
+  const targets = await getOrderedOutstanding();
+  const totalOutstanding = targets.reduce((s, t) => s + t.outstanding, 0);
+
+  const result = allocateWaterfall(amount, targets);
+  const appliedById = new Map(result.allocations.map((a) => [a.id, a.applied]));
+
+  const items: BulkPaymentPreviewItem[] = targets
+    .map((t) => {
+      const applied = appliedById.get(t.id) ?? 0;
+      return {
+        id: t.id,
+        month: t.month,
+        year: t.year,
+        outstandingBefore: t.outstanding,
+        applied,
+        outstandingAfter: Math.round((t.outstanding - applied) * 100) / 100,
+      };
+    })
+    .filter((i) => i.applied > 0);
+
+  return {
+    items,
+    totalApplied: result.totalApplied,
+    leftover: result.leftover,
+    totalOutstanding,
+  };
+}
+
+/**
+ * Log a single lump-sum payment that is distributed across outstanding months,
+ * oldest first, spilling into the next month as each is settled. Creates one
+ * OveragePayment record per month that receives a share (so per-month history
+ * stays auditable), all sharing the same note. Any amount beyond total
+ * outstanding is not allocated and returned as `leftover`.
+ */
+export async function addBulkOveragePayment(data: {
+  amount: number;
+  date: string;
+  note?: string | null;
+}): Promise<{ totalApplied: number; leftover: number; monthsPaid: number }> {
+  if (data.amount <= 0) throw new Error("Payment amount must be positive");
+
+  const targets = await getOrderedOutstanding();
+  const result = allocateWaterfall(data.amount, targets);
+
+  if (result.allocations.length === 0) {
+    return { totalApplied: 0, leftover: result.leftover, monthsPaid: 0 };
+  }
+
+  const note = data.note?.trim() || null;
+  const bulkNote = note
+    ? `${note} (bulk ${result.totalApplied})`
+    : `Bulk payment ${result.totalApplied}`;
+  const date = new Date(data.date);
+
+  await prisma.overagePayment.createMany({
+    data: result.allocations.map((a) => ({
+      overage_id: a.id,
+      amount: a.applied,
+      date,
+      note: bulkNote,
+    })),
+  });
+
+  for (const allocation of result.allocations) {
+    await syncOverageStatus(allocation.id);
+  }
+  await revalidateAppPaths();
+
+  return {
+    totalApplied: result.totalApplied,
+    leftover: result.leftover,
+    monthsPaid: result.allocations.length,
+  };
+}
+
+export async function deleteOveragePayment(paymentId: string): Promise<void> {
+  const payment = await prisma.overagePayment.findUnique({
+    where: { id: paymentId },
+  });
+  if (!payment) throw new Error("Payment not found");
+
+  await prisma.overagePayment.delete({ where: { id: paymentId } });
+  await syncOverageStatus(payment.overage_id);
+  await revalidateAppPaths();
+}
+
+export async function setOverageOverride(
+  overageId: string,
+  amount: number | null
+): Promise<void> {
+  if (amount != null && amount < 0) {
+    throw new Error("Override amount cannot be negative");
+  }
+
+  await prisma.budgetOverage.update({
+    where: { id: overageId },
+    data: { override_amount: amount },
+  });
+  await syncOverageStatus(overageId);
+  await revalidateAppPaths();
+}
+
+export async function setOverageOwedTo(
+  overageId: string,
+  owedTo: string | null
+): Promise<void> {
+  await prisma.budgetOverage.update({
+    where: { id: overageId },
+    data: { owed_to: owedTo?.trim() || null },
+  });
+  await revalidateAppPaths();
 }

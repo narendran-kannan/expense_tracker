@@ -8,6 +8,7 @@ import {
   getTotalOutstanding,
   getKnownCounterparties,
   getEmiInstallmentsForMonth,
+  getCarryoverSummary,
 } from "./actions";
 import { effectiveSpend } from "@/lib/recoverable";
 import { OutstandingCard } from "@/components/outstanding-card";
@@ -24,6 +25,7 @@ import { MonthSwitcher } from "@/components/month-switcher";
 import { AddExpenseDialog } from "@/components/add-expense-dialog";
 import { SetBudgetDialog } from "@/components/set-budget-dialog";
 import { BudgetCard } from "@/components/budget-card";
+import { CarryoverCard } from "@/components/carryover-card";
 import { NavBar } from "@/components/nav-bar";
 
 function formatINR(value: number) {
@@ -57,6 +59,7 @@ export default async function Dashboard({
     outstanding,
     knownCounterparties,
     emiInstallments,
+    carryover,
   ] = await Promise.all([
     getTransactions(month, year),
     getCategoriesWithSubs(),
@@ -65,7 +68,12 @@ export default async function Dashboard({
     getTotalOutstanding(),
     getKnownCounterparties(),
     getEmiInstallmentsForMonth(month, year),
+    getCarryoverSummary(),
   ] as const);
+
+  const carryoverMonthsOwing = carryover.months.filter(
+    (m) => m.outstanding > 0
+  ).length;
 
   const spendingTxns = transactions
     .filter((t) => !t.is_cc_payment)
@@ -204,6 +212,13 @@ export default async function Dashboard({
 
           {budget && (
             <BudgetCard budget={budget.amount} spent={totalSpend} />
+          )}
+
+          {carryover.totalOutstanding > 0 && (
+            <CarryoverCard
+              totalOutstanding={carryover.totalOutstanding}
+              monthsOwing={carryoverMonthsOwing}
+            />
           )}
 
           <Card>
