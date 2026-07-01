@@ -276,7 +276,7 @@ export default async function Dashboard({
 
         <Separator />
 
-        <Tabs defaultValue="reviews">
+        <Tabs defaultValue="all">
           <TabsList className="w-full">
             <TabsTrigger value="reviews">
               <span className="sm:hidden">Reviews</span>
