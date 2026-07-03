@@ -176,14 +176,25 @@ export async function renameCategory(id: string, name: string) {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Category name is required");
 
+  const existing = await prisma.category.findUnique({ where: { id } });
+  if (!existing) throw new Error("Category not found");
+
   await prisma.category.update({
     where: { id },
     data: { name: trimmed },
   });
+
+  if (!existing.parentId) {
+    await prisma.transaction.updateMany({
+      where: { categoryId: id },
+      data: { category: trimmed },
+    });
+  }
+
   await revalidateAppPaths();
 }
 
-export async function deleteCategory(id: string) {
+export async function deleteCategory(id: string, reassignToId?: string) {
   const category = await prisma.category.findUnique({
     where: { id },
     include: { children: true },
@@ -191,19 +202,42 @@ export async function deleteCategory(id: string) {
 
   if (!category) throw new Error("Category not found");
 
-  const idsToClear = [category.id, ...category.children.map((child) => child.id)];
+  if (category.parentId) {
+    await prisma.transaction.updateMany({
+      where: { subcategoryId: id },
+      data: { subcategoryId: null },
+    });
+    await prisma.category.delete({ where: { id } });
+    await revalidateAppPaths();
+    return;
+  }
+
+  const childIds = category.children.map((child) => child.id);
+
+  let target: { id: string; name: string } | null = null;
+  if (reassignToId) {
+    if (reassignToId === id) {
+      throw new Error("Cannot reassign to the category being deleted");
+    }
+    const found = await prisma.category.findFirst({
+      where: { id: reassignToId, parentId: null },
+    });
+    if (!found) throw new Error("Reassign target not found");
+    target = found;
+  } else {
+    target = await prisma.category.findFirst({
+      where: { name: "Other", parentId: null, id: { not: id } },
+    });
+  }
 
   await prisma.transaction.updateMany({
     where: {
-      OR: [
-        { categoryId: { in: idsToClear } },
-        { subcategoryId: { in: idsToClear } },
-      ],
+      OR: [{ categoryId: id }, { subcategoryId: { in: childIds } }],
     },
     data: {
       subcategoryId: null,
-      categoryId: null,
-      category: "Other",
+      categoryId: target?.id ?? null,
+      category: target?.name ?? "Other",
     },
   });
 
@@ -214,6 +248,278 @@ export async function deleteCategory(id: string) {
   });
 
   await revalidateAppPaths();
+}
+
+export interface SubcategoryStat {
+  id: string;
+  name: string;
+  count: number;
+  total: number;
+}
+
+export interface CategoryStat {
+  id: string;
+  name: string;
+  count: number;
+  total: number;
+  subcategories: SubcategoryStat[];
+}
+
+export interface OrphanStat {
+  category: string;
+  count: number;
+  total: number;
+}
+
+export interface CategoryStats {
+  categories: CategoryStat[];
+  orphaned: OrphanStat[];
+  staleCount: number;
+}
+
+export async function getCategoryStats(): Promise<CategoryStats> {
+  const [cats, byCategory, bySubcategory, orphans, pairs] = await Promise.all([
+    prisma.category.findMany({
+      where: { parentId: null },
+      orderBy: { name: "asc" },
+      include: { children: { orderBy: { name: "asc" } } },
+    }),
+    prisma.transaction.groupBy({
+      by: ["categoryId"],
+      where: { categoryId: { not: null } },
+      _count: { _all: true },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["subcategoryId"],
+      where: { subcategoryId: { not: null } },
+      _count: { _all: true },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["category"],
+      where: { categoryId: null },
+      _count: { _all: true },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["categoryId", "category"],
+      where: { categoryId: { not: null } },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const catCounts = new Map(
+    byCategory.map((g) => [
+      g.categoryId,
+      { count: g._count._all, total: g._sum.amount ?? 0 },
+    ])
+  );
+  const subCounts = new Map(
+    bySubcategory.map((g) => [
+      g.subcategoryId,
+      { count: g._count._all, total: g._sum.amount ?? 0 },
+    ])
+  );
+
+  const nameById = new Map(cats.map((c) => [c.id, c.name]));
+  let staleCount = 0;
+  for (const pair of pairs) {
+    const name = nameById.get(pair.categoryId as string);
+    if (name !== undefined && pair.category !== name) {
+      staleCount += pair._count._all;
+    }
+  }
+
+  return {
+    categories: cats.map((c) => ({
+      id: c.id,
+      name: c.name,
+      count: catCounts.get(c.id)?.count ?? 0,
+      total: catCounts.get(c.id)?.total ?? 0,
+      subcategories: c.children.map((sub) => ({
+        id: sub.id,
+        name: sub.name,
+        count: subCounts.get(sub.id)?.count ?? 0,
+        total: subCounts.get(sub.id)?.total ?? 0,
+      })),
+    })),
+    orphaned: orphans.map((o) => ({
+      category: o.category,
+      count: o._count._all,
+      total: o._sum.amount ?? 0,
+    })),
+    staleCount,
+  };
+}
+
+export async function mergeCategory(sourceId: string, targetId: string) {
+  if (sourceId === targetId) {
+    throw new Error("Cannot merge a category into itself");
+  }
+
+  const [source, target] = await Promise.all([
+    prisma.category.findUnique({
+      where: { id: sourceId },
+      include: { children: true },
+    }),
+    prisma.category.findUnique({
+      where: { id: targetId },
+      include: { children: true },
+    }),
+  ]);
+
+  if (!source || !target) throw new Error("Category not found");
+  if (source.parentId || target.parentId) {
+    throw new Error("Merge applies to top-level categories only");
+  }
+
+  const targetSubsByName = new Map(
+    target.children.map((c) => [c.name.toLowerCase(), c])
+  );
+
+  for (const child of source.children) {
+    const existing = targetSubsByName.get(child.name.toLowerCase());
+    if (existing) {
+      await prisma.transaction.updateMany({
+        where: { subcategoryId: child.id },
+        data: { subcategoryId: existing.id },
+      });
+      await prisma.category.delete({ where: { id: child.id } });
+    } else {
+      await prisma.category.update({
+        where: { id: child.id },
+        data: { parentId: targetId },
+      });
+    }
+  }
+
+  await prisma.transaction.updateMany({
+    where: { categoryId: sourceId },
+    data: { categoryId: targetId, category: target.name },
+  });
+
+  await prisma.transaction.updateMany({
+    where: { categoryId: null, category: source.name },
+    data: { categoryId: targetId, category: target.name },
+  });
+
+  await prisma.category.delete({ where: { id: sourceId } });
+  await revalidateAppPaths();
+}
+
+export async function mergeSubcategory(sourceId: string, targetId: string) {
+  if (sourceId === targetId) {
+    throw new Error("Cannot merge a subcategory into itself");
+  }
+
+  const [source, target] = await Promise.all([
+    prisma.category.findUnique({ where: { id: sourceId } }),
+    prisma.category.findUnique({ where: { id: targetId } }),
+  ]);
+
+  if (!source || !target) throw new Error("Subcategory not found");
+  if (!source.parentId || !target.parentId) {
+    throw new Error("Merge applies to subcategories only");
+  }
+
+  const targetParent = await prisma.category.findUnique({
+    where: { id: target.parentId },
+  });
+  if (!targetParent) throw new Error("Target parent category not found");
+
+  await prisma.transaction.updateMany({
+    where: { subcategoryId: sourceId },
+    data: {
+      subcategoryId: targetId,
+      categoryId: targetParent.id,
+      category: targetParent.name,
+    },
+  });
+
+  await prisma.category.delete({ where: { id: sourceId } });
+  await revalidateAppPaths();
+}
+
+export async function assignOrphanedTransactions(
+  legacyName: string,
+  targetId: string
+): Promise<number> {
+  const target = await prisma.category.findFirst({
+    where: { id: targetId, parentId: null },
+  });
+  if (!target) throw new Error("Target category not found");
+
+  const result = await prisma.transaction.updateMany({
+    where: { categoryId: null, category: legacyName },
+    data: { categoryId: target.id, category: target.name },
+  });
+
+  await revalidateAppPaths();
+  return result.count;
+}
+
+export async function deleteEmptyCategories(): Promise<number> {
+  const [cats, byCategory, bySubcategory, legacy] = await Promise.all([
+    prisma.category.findMany({
+      where: { parentId: null },
+      include: { children: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["categoryId"],
+      where: { categoryId: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["subcategoryId"],
+      where: { subcategoryId: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["category"],
+      where: { categoryId: null },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const usedIds = new Set(
+    [
+      ...byCategory.map((g) => g.categoryId),
+      ...bySubcategory.map((g) => g.subcategoryId),
+    ].filter(Boolean)
+  );
+  const legacyNames = new Set(legacy.map((g) => g.category.toLowerCase()));
+
+  const deletable = cats.filter(
+    (c) =>
+      c.name !== "Other" &&
+      !usedIds.has(c.id) &&
+      !c.children.some((child) => usedIds.has(child.id)) &&
+      !legacyNames.has(c.name.toLowerCase())
+  );
+
+  if (deletable.length === 0) return 0;
+
+  const ids = deletable.map((c) => c.id);
+  await prisma.category.deleteMany({ where: { parentId: { in: ids } } });
+  await prisma.category.deleteMany({ where: { id: { in: ids } } });
+
+  await revalidateAppPaths();
+  return deletable.length;
+}
+
+export async function syncLegacyCategoryStrings(): Promise<number> {
+  const cats = await prisma.category.findMany({ where: { parentId: null } });
+  let updated = 0;
+  for (const cat of cats) {
+    const result = await prisma.transaction.updateMany({
+      where: { categoryId: cat.id, NOT: { category: cat.name } },
+      data: { category: cat.name },
+    });
+    updated += result.count;
+  }
+  if (updated > 0) await revalidateAppPaths();
+  return updated;
 }
 
 export async function seedCategories() {

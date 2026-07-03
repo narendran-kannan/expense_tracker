@@ -1,15 +1,20 @@
 import { auth, signOut } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { getCategoriesWithSubs } from "@/app/actions";
+import { getCategoriesWithSubs, getCategoryStats } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { NavBar } from "@/components/nav-bar";
 import { CategoryManager } from "@/components/category-manager";
+import { CategoryCleanup } from "@/components/category-cleanup";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default async function CategoriesPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const categories = await getCategoriesWithSubs();
+  const [categories, stats] = await Promise.all([
+    getCategoriesWithSubs(),
+    getCategoryStats(),
+  ]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -41,7 +46,18 @@ export default async function CategoriesPage() {
           </p>
         </div>
 
-        <CategoryManager categories={categories} />
+        <Tabs defaultValue="manage">
+          <TabsList>
+            <TabsTrigger value="manage">Manage</TabsTrigger>
+            <TabsTrigger value="cleanup">Cleanup</TabsTrigger>
+          </TabsList>
+          <TabsContent value="manage" className="mt-4">
+            <CategoryManager categories={categories} />
+          </TabsContent>
+          <TabsContent value="cleanup" className="mt-4">
+            <CategoryCleanup stats={stats} />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
