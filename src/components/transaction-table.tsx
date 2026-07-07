@@ -217,20 +217,25 @@ export function TransactionTable({
     maxAmount,
   ]);
 
+  const emiInstallmentTotal = useMemo(
+    () => emiInstallments.reduce((sum, i) => sum + i.amount, 0),
+    [emiInstallments]
+  );
+
   const filteredTotal = useMemo(
     () =>
       filtered
         .filter((t) => !t.is_cc_payment)
-        .reduce((sum, t) => sum + txEffectiveSpend(t), 0),
-    [filtered]
+        .reduce((sum, t) => sum + txEffectiveSpend(t), 0) + emiInstallmentTotal,
+    [filtered, emiInstallmentTotal]
   );
 
   const monthTotal = useMemo(
     () =>
       transactions
         .filter((t) => !t.is_cc_payment)
-        .reduce((sum, t) => sum + txEffectiveSpend(t), 0),
-    [transactions]
+        .reduce((sum, t) => sum + txEffectiveSpend(t), 0) + emiInstallmentTotal,
+    [transactions, emiInstallmentTotal]
   );
 
   const displayRows = useMemo<DisplayRow[]>(() => {
@@ -427,6 +432,16 @@ export function TransactionTable({
                 {transactions.length}
               </span>{" "}
               transactions
+              {emiInstallments.length > 0 && (
+                <>
+                  {" "}
+                  +{" "}
+                  <span className="font-medium text-foreground">
+                    {emiInstallments.length}
+                  </span>{" "}
+                  EMI installment{emiInstallments.length === 1 ? "" : "s"}
+                </>
+              )}
             </span>
             <span className="text-muted-foreground">
               Total:{" "}
@@ -442,7 +457,7 @@ export function TransactionTable({
           </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {filtered.length === 0 && emiInstallments.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             {transactions.length === 0
               ? "No transactions found for this month."
@@ -487,61 +502,15 @@ export function TransactionTable({
                   />
                 )
               )}
+              {emiInstallments.map((i) => (
+                <EmiInstallmentRow
+                  key={i.id}
+                  installment={i}
+                  selectionMode={selectionMode}
+                />
+              ))}
             </TableBody>
           </Table>
-        )}
-
-        {emiInstallments.length > 0 && (
-          <div className="space-y-2 rounded-lg border border-dashed bg-muted/20 p-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                EMI installments this month
-              </div>
-              <span className="text-sm text-muted-foreground">
-                {formatINR(
-                  emiInstallments.reduce((sum, i) => sum + i.amount, 0)
-                )}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Projected from purchases bought on EMI in earlier months. Counted
-              in your spend total but paid via your credit card bill (excluded
-              separately to avoid double-counting).
-            </p>
-            <Table>
-              <TableBody>
-                {emiInstallments.map((i) => (
-                  <TableRow key={i.id} className="text-muted-foreground">
-                    <TableCell>
-                      {new Date(i.date).toLocaleDateString("en-IN", {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </TableCell>
-                    <TableCell>{i.merchant}</TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      {formatINR(i.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">
-                        {i.subcategory
-                          ? `${i.category} / ${i.subcategory}`
-                          : i.category}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant="secondary" className="text-xs">
-                        <CalendarClock className="mr-1 h-3 w-3" />
-                        EMI {i.installmentNumber}/{i.tenureMonths}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
         )}
       </CardContent>
     </Card>
@@ -1085,6 +1054,49 @@ function TransactionRow({
           </DialogContent>
         </Dialog>
       </TableCell>
+    </TableRow>
+  );
+}
+
+function EmiInstallmentRow({
+  installment: i,
+  selectionMode,
+}: {
+  installment: EmiInstallmentDTO;
+  selectionMode: boolean;
+}) {
+  return (
+    <TableRow
+      className="opacity-60"
+      title="EMI installment (projected from an earlier purchase; paid via your credit card bill)"
+    >
+      {selectionMode && <TableCell className="w-8" />}
+      <TableCell>
+        {new Date(i.date).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })}
+      </TableCell>
+      <TableCell>{i.merchant}</TableCell>
+      <TableCell className="font-medium">{formatINR(i.amount)}</TableCell>
+      <TableCell>
+        <Badge variant="outline">
+          {i.subcategory ? `${i.category} / ${i.subcategory}` : i.category}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
+        Installment {i.installmentNumber} of {i.tenureMonths}
+      </TableCell>
+      <TableCell>
+        <Link href="/emis" className="inline-flex items-center">
+          <Badge variant="secondary" className="text-xs">
+            <CalendarClock className="mr-1 h-3 w-3" />
+            EMI {i.installmentNumber}/{i.tenureMonths}
+          </Badge>
+        </Link>
+      </TableCell>
+      <TableCell />
     </TableRow>
   );
 }

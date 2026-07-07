@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import {
   BarChart3,
   Bug,
+  CalendarClock,
   ChevronDown,
   FolderTree,
   HandCoins,
@@ -34,6 +35,7 @@ const PRIMARY_NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/recoverables", label: "Recoverables", icon: HandCoins },
+  { href: "/emis", label: "EMIs", icon: CalendarClock },
   { href: "/carryover", label: "Carryover", icon: Wallet },
 ];
 

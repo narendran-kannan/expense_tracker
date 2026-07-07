@@ -22,8 +22,12 @@ import {
 import {
   defaultMonthlyAmount,
   emiInstallmentForMonth,
+  emiInstallmentDay,
   hasVirtualInstallmentForMonth,
   installmentIndexForMonth,
+  emiProgress,
+  emiSchedule,
+  type EmiScheduleEntry,
 } from "@/lib/emi";
 import {
   OVERAGE_STATUS,
@@ -46,7 +50,7 @@ async function revalidateAppPaths() {
   revalidatePath("/analytics");
   revalidatePath("/categories");
   revalidatePath("/recoverables");
-  revalidatePath("/carryover");
+  revalidatePath("/emis");
 }
 
 export async function getTransactions(month?: number, year?: number) {
@@ -1639,6 +1643,10 @@ export async function markAsEmi(
       emi_tenure_months: tenure,
       emi_monthly_amount: monthly,
       emi_start_date: startDate,
+      // Align the transaction to the EMI start date so the row and its first
+      // installment both land in the EMI start month (dashboard queries by
+      // `date`). Keeps every month consistent when start != purchase month.
+      date: startDate,
       // EMI and recoverable are mutually exclusive.
       recoverable_amount: null,
       counterparty: null,
@@ -1664,6 +1672,86 @@ export async function unmarkEmi(transactionId: string) {
     },
   });
   await revalidateAppPaths();
+}
+
+export interface EmiDTO {
+  id: string;
+  amount: number;
+  merchant: string;
+  date: string;
+  category: string;
+  subcategory: string | null;
+  tenureMonths: number;
+  monthlyAmount: number;
+  paidCount: number;
+  remainingCount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  startLabel: string;
+  endLabel: string;
+  complete: boolean;
+  schedule: (EmiScheduleEntry & { label: string })[];
+}
+
+function monthLabel(month: number, year: number): string {
+  return new Date(year, month).toLocaleDateString("en-IN", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/**
+ * All EMI purchases with time-based progress and a month-by-month schedule.
+ * Active (incomplete) EMIs first, then completed, each most-recent first.
+ */
+export async function getEmis(): Promise<EmiDTO[]> {
+  const rows = await prisma.transaction.findMany({
+    where: { is_emi: true },
+    orderBy: { emi_start_date: "desc" },
+    include: { subcategoryRef: true },
+  });
+
+  const now = new Date();
+
+  const dtos = rows.map((tx): EmiDTO => {
+    const input = {
+      amount: tx.amount,
+      is_emi: tx.is_emi,
+      emi_tenure_months: tx.emi_tenure_months,
+      emi_monthly_amount: tx.emi_monthly_amount,
+      emi_start_date: tx.emi_start_date,
+      date: tx.date,
+    };
+    const progress = emiProgress(input, now);
+    const schedule = emiSchedule(input, now).map((e) => ({
+      ...e,
+      label: monthLabel(e.month, e.year),
+    }));
+
+    return {
+      id: tx.id,
+      amount: tx.amount,
+      merchant: tx.merchant,
+      date: (tx.emi_start_date ?? tx.date).toISOString(),
+      category: tx.category,
+      subcategory: tx.subcategoryRef?.name ?? null,
+      tenureMonths: progress.tenure,
+      monthlyAmount: progress.monthly,
+      paidCount: progress.paidCount,
+      remainingCount: progress.remainingCount,
+      paidAmount: progress.paidAmount,
+      remainingAmount: progress.remainingAmount,
+      startLabel: monthLabel(progress.start.month, progress.start.year),
+      endLabel: monthLabel(progress.end.month, progress.end.year),
+      complete: progress.complete,
+      schedule,
+    };
+  });
+
+  return dtos.sort((a, b) => {
+    if (a.complete !== b.complete) return a.complete ? 1 : -1;
+    return b.date.localeCompare(a.date);
+  });
 }
 
 export interface EmiInstallmentDTO {
@@ -1750,7 +1838,7 @@ export async function getEmiInstallmentsForMonth(
       sourceId: tx.id,
       amount,
       merchant: tx.merchant,
-      date: new Date(year, month, Math.min(tx.date.getDate(), 28)).toISOString(),
+      date: new Date(year, month, Math.min(emiInstallmentDay(input), 28)).toISOString(),
       category: tx.category,
       subcategory: tx.subcategoryRef?.name ?? null,
       installmentNumber: index + 1,

@@ -1,6 +1,6 @@
 {
   "name": "expense_tracker",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n prisma,next -c magenta,cyan \"npm:dev:prisma\" \"npm:dev:next\"",

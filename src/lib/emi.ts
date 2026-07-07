@@ -47,6 +47,17 @@ export function emiStartMonth(t: EmiInput): { month: number; year: number } {
 }
 
 /**
+ * The day-of-month each installment lands on, taken from the EMI start date (not
+ * the transaction creation date). Falls back to the transaction date, then 1.
+ */
+export function emiInstallmentDay(t: EmiInput): number {
+  const raw = t.emi_start_date ?? t.date ?? null;
+  if (raw == null) return 1;
+  const d = raw instanceof Date ? raw : new Date(raw);
+  return d.getDate();
+}
+
+/**
  * Default no-cost monthly installment: amount / tenure. Used to pre-fill the UI.
  */
 export function defaultMonthlyAmount(amount: number, tenure: number): number {
@@ -150,6 +161,97 @@ export function emiScheduleMonths(
 }
 
 /**
+ * The final (month, year) an EMI schedule covers.
+ */
+export function emiEndMonth(t: EmiInput): { month: number; year: number } {
+  const tenure = isEmi(t) ? (t.emi_tenure_months as number) : 1;
+  const start = emiStartMonth(t);
+  const totalMonths = start.month + (tenure - 1);
+  return { month: totalMonths % 12, year: start.year + Math.floor(totalMonths / 12) };
+}
+
+export interface EmiScheduleEntry {
+  index: number;
+  installmentNumber: number;
+  month: number;
+  year: number;
+  amount: number;
+  paid: boolean;
+}
+
+/**
+ * How many installments have elapsed as of `asOf` (default: now). An installment
+ * counts as paid once its month has started (i.e. asOf is in or past that month).
+ * Clamped to [0, tenure].
+ */
+export function emiInstallmentsPaid(t: EmiInput, asOf: Date = new Date()): number {
+  if (!isEmi(t)) return 0;
+  const tenure = t.emi_tenure_months as number;
+  const start = emiStartMonth(t);
+  const elapsed =
+    (asOf.getFullYear() - start.year) * 12 + (asOf.getMonth() - start.month) + 1;
+  return Math.max(0, Math.min(tenure, elapsed));
+}
+
+export interface EmiProgress {
+  tenure: number;
+  monthly: number;
+  paidCount: number;
+  remainingCount: number;
+  paidAmount: number;
+  remainingAmount: number;
+  start: { month: number; year: number };
+  end: { month: number; year: number };
+  complete: boolean;
+}
+
+/**
+ * Time-based progress of an EMI: how many installments have elapsed, how much has
+ * been recognized so far, and how much remains. Amounts are derived from the
+ * schedule so the last-installment rounding remainder is respected.
+ */
+export function emiProgress(t: EmiInput, asOf: Date = new Date()): EmiProgress {
+  const tenure = isEmi(t) ? (t.emi_tenure_months as number) : 0;
+  const monthly =
+    typeof t.emi_monthly_amount === "number" && t.emi_monthly_amount > 0
+      ? t.emi_monthly_amount
+      : defaultMonthlyAmount(t.amount, Math.max(1, tenure));
+  const paidCount = emiInstallmentsPaid(t, asOf);
+  const schedule = emiSchedule(t, asOf);
+  const paidAmount = schedule
+    .filter((e) => e.paid)
+    .reduce((s, e) => s + e.amount, 0);
+  return {
+    tenure,
+    monthly,
+    paidCount,
+    remainingCount: Math.max(0, tenure - paidCount),
+    paidAmount: Math.round(paidAmount * 100) / 100,
+    remainingAmount: Math.round((t.amount - paidAmount) * 100) / 100,
+    start: emiStartMonth(t),
+    end: emiEndMonth(t),
+    complete: paidCount >= tenure,
+  };
+}
+
+/**
+ * Full month-by-month schedule for an EMI, each entry flagged paid/upcoming
+ * relative to `asOf` (default: now).
+ */
+export function emiSchedule(t: EmiInput, asOf: Date = new Date()): EmiScheduleEntry[] {
+  if (!isEmi(t)) return [];
+  const paidCount = emiInstallmentsPaid(t, asOf);
+  return emiScheduleMonths(t).map(({ month, year, index }) => ({
+    index,
+    installmentNumber: index + 1,
+    month,
+    year,
+    amount: emiInstallmentForMonth(t, month, year),
+    paid: index < paidCount,
+  }));
+}
+
+/**
  * Expand a list of transactions for an inclusive [start, end] date range, with
  * EMI purchases spread into per-month installments.
  *
@@ -172,7 +274,7 @@ export function expandTransactionsForRange<
       out.push(row);
       continue;
     }
-    const baseDay = row.date.getDate();
+    const baseDay = emiInstallmentDay(row);
     for (const { month, year } of emiScheduleMonths(row)) {
       const installmentDate = new Date(year, month, Math.min(baseDay, 28));
       if (installmentDate < start || installmentDate > end) continue;

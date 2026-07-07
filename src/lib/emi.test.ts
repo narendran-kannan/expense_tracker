@@ -9,6 +9,11 @@ import {
   hasVirtualInstallmentForMonth,
   emiScheduleMonths,
   expandTransactionsForRange,
+  emiEndMonth,
+  emiInstallmentsPaid,
+  emiProgress,
+  emiSchedule,
+  emiInstallmentDay,
   type EmiInput,
 } from "./emi";
 
@@ -38,6 +43,30 @@ describe("isEmi", () => {
 
   it("is true when flagged with a valid tenure", () => {
     expect(isEmi(phone)).toBe(true);
+  });
+});
+
+describe("emiInstallmentDay", () => {
+  it("uses the EMI start date's day, not the transaction date", () => {
+    expect(
+      emiInstallmentDay({
+        amount: 1000,
+        is_emi: true,
+        emi_tenure_months: 6,
+        emi_start_date: new Date(2026, 7, 8), // 8 Aug
+        date: new Date(2026, 6, 7), // created 7 Jul
+      })
+    ).toBe(8);
+  });
+
+  it("falls back to the transaction date when no EMI start date", () => {
+    expect(emiInstallmentDay({ amount: 1000, date: new Date(2026, 6, 7) })).toBe(
+      7
+    );
+  });
+
+  it("falls back to 1 when nothing is set", () => {
+    expect(emiInstallmentDay({ amount: 1000 })).toBe(1);
   });
 });
 
@@ -229,6 +258,27 @@ describe("expandTransactionsForRange", () => {
     expect(out[0].emi_tenure_months).toBeNull();
   });
 
+  it("dates installments by the EMI start day, not the creation date", () => {
+    // Created 7 Jul, but EMI starts 8 Aug — installment must land on the 8th.
+    const emiRow = {
+      amount: 12000,
+      is_emi: true,
+      emi_tenure_months: 6,
+      emi_monthly_amount: 2000,
+      emi_start_date: new Date(2026, 7, 8), // 8 Aug
+      date: new Date(2026, 6, 7), // created 7 Jul
+      merchant: "Dell",
+    };
+    const out = expandTransactionsForRange(
+      [emiRow],
+      new Date(2026, 7, 1),
+      new Date(2026, 7, 31, 23, 59, 59, 999)
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].date.getDate()).toBe(8);
+    expect(out[0].date.getMonth()).toBe(7); // August
+  });
+
   it("includes installments for an EMI that started before the range", () => {
     const emiRow = { ...phone, date: new Date(2026, 5, 15), merchant: "Croma" };
     // Range = Jan 2027 only; installment index 7 falls here.
@@ -262,6 +312,76 @@ describe("expandTransactionsForRange", () => {
       new Date(2027, 11, 31, 23, 59, 59, 999)
     );
     const total = out.reduce((s, r) => s + r.amount, 0);
+    expect(total).toBe(60000);
+  });
+});
+
+describe("emiEndMonth", () => {
+  it("returns the last installment month", () => {
+    // Jun 2026 start, 12 months -> May 2027
+    expect(emiEndMonth(phone)).toEqual({ month: 4, year: 2027 });
+  });
+});
+
+describe("emiInstallmentsPaid", () => {
+  it("is 0 before the start month", () => {
+    expect(emiInstallmentsPaid(phone, new Date(2026, 4, 30))).toBe(0);
+  });
+
+  it("counts the start month as 1 once it begins", () => {
+    expect(emiInstallmentsPaid(phone, new Date(2026, 5, 1))).toBe(1);
+  });
+
+  it("counts elapsed installments mid-tenure", () => {
+    // Aug 2026 -> Jun,Jul,Aug = 3
+    expect(emiInstallmentsPaid(phone, new Date(2026, 7, 15))).toBe(3);
+  });
+
+  it("clamps to tenure after the window ends", () => {
+    expect(emiInstallmentsPaid(phone, new Date(2030, 0, 1))).toBe(12);
+  });
+
+  it("is 0 for a non-EMI", () => {
+    expect(emiInstallmentsPaid({ amount: 100 })).toBe(0);
+  });
+});
+
+describe("emiProgress", () => {
+  it("reports paid/remaining counts and amounts mid-tenure", () => {
+    const p = emiProgress(phone, new Date(2026, 7, 15)); // 3 of 12 paid
+    expect(p.tenure).toBe(12);
+    expect(p.monthly).toBe(5000);
+    expect(p.paidCount).toBe(3);
+    expect(p.remainingCount).toBe(9);
+    expect(p.paidAmount).toBe(15000);
+    expect(p.remainingAmount).toBe(45000);
+    expect(p.start).toEqual({ month: 5, year: 2026 });
+    expect(p.end).toEqual({ month: 4, year: 2027 });
+    expect(p.complete).toBe(false);
+  });
+
+  it("marks complete when all installments have elapsed", () => {
+    const p = emiProgress(phone, new Date(2027, 11, 1));
+    expect(p.paidCount).toBe(12);
+    expect(p.remainingCount).toBe(0);
+    expect(p.paidAmount).toBe(60000);
+    expect(p.remainingAmount).toBe(0);
+    expect(p.complete).toBe(true);
+  });
+});
+
+describe("emiSchedule", () => {
+  it("returns tenure entries flagged paid/upcoming", () => {
+    const s = emiSchedule(phone, new Date(2026, 7, 15)); // 3 paid
+    expect(s).toHaveLength(12);
+    expect(s[0]).toMatchObject({ installmentNumber: 1, month: 5, year: 2026, amount: 5000, paid: true });
+    expect(s[2]).toMatchObject({ installmentNumber: 3, paid: true });
+    expect(s[3]).toMatchObject({ installmentNumber: 4, paid: false });
+    expect(s[11]).toMatchObject({ installmentNumber: 12, month: 4, year: 2027, paid: false });
+  });
+
+  it("schedule amounts sum to the original amount", () => {
+    const total = emiSchedule(phone).reduce((sum, e) => sum + e.amount, 0);
     expect(total).toBe(60000);
   });
 });
