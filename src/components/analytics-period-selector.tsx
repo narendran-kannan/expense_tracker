@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 interface AnalyticsPeriodSelectorProps {
   mode: "monthly" | "yearly";
   categoryMode: "parent" | "subcategory" | "combined";
+  spendMode: "spend" | "tracked" | "all";
   month: number;
   year: number;
   availableYears: number[];
@@ -23,6 +24,7 @@ interface AnalyticsPeriodSelectorProps {
 export function AnalyticsPeriodSelector({
   mode,
   categoryMode,
+  spendMode,
   month,
   year,
   availableYears,
@@ -97,6 +99,19 @@ export function AnalyticsPeriodSelector({
             <SelectItem value="parent">Parent Categories</SelectItem>
             <SelectItem value="subcategory">Subcategories</SelectItem>
             <SelectItem value="combined">Combined</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={spendMode}
+          onValueChange={(value) => pushParams({ mode: value })}
+        >
+          <SelectTrigger className={cn("w-[130px]")}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="spend">Expenses</SelectItem>
+            <SelectItem value="tracked">Tracked</SelectItem>
+            <SelectItem value="all">Both</SelectItem>
           </SelectContent>
         </Select>
       </div>

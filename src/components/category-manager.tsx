@@ -5,12 +5,15 @@ import {
   createCategory,
   deleteCategory,
   renameCategory,
+  setCategoryExcludedFromSpend,
   type CategoryWithSubs,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 
 interface CategoryManagerProps {
@@ -138,7 +141,14 @@ function CategoryCard({ category }: { category: CategoryWithSubs }) {
                 </Button>
               </div>
             ) : (
-              <CardTitle className="text-lg">{category.name}</CardTitle>
+              <CardTitle className="text-lg">
+                {category.name}
+                {category.excludedFromSpend && (
+                  <Badge variant="secondary" className="ml-2 align-middle">
+                    Tracked
+                  </Badge>
+                )}
+              </CardTitle>
             )}
             <p className="text-sm text-muted-foreground">
               {category.subcategories.length} subcategories
@@ -167,6 +177,29 @@ function CategoryCard({ category }: { category: CategoryWithSubs }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {category.id ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border p-3">
+            <div className="space-y-0.5">
+              <Label htmlFor={`excluded-${category.id}`} className="text-sm">
+                Don&apos;t count as expense
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Track transactions but exclude them from spend totals, budget
+                and analytics.
+              </p>
+            </div>
+            <Switch
+              id={`excluded-${category.id}`}
+              checked={category.excludedFromSpend}
+              disabled={isPending}
+              onCheckedChange={(checked) =>
+                startTransition(async () => {
+                  await setCategoryExcludedFromSpend(category.id, checked);
+                })
+              }
+            />
+          </div>
+        ) : null}
         <div className="flex gap-2">
           <Input
             value={newSubcategory}

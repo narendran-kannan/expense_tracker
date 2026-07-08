@@ -1,6 +1,13 @@
 export interface CategoryDefinition {
   name: string;
   subcategories?: string[];
+  /**
+   * Default for the Category.excluded_from_spend flag, applied only when the
+   * category row is first created. "Tracked, not counted": transactions in
+   * these categories are recorded but never counted as expenses. Users can
+   * toggle this per category later; sync never overrides their choice.
+   */
+  excludedFromSpend?: boolean;
 }
 
 export const DEFAULT_CATEGORIES: CategoryDefinition[] = [
@@ -45,6 +52,7 @@ export const DEFAULT_CATEGORIES: CategoryDefinition[] = [
   { name: "Other" },
   {
     name: "Savings & Investments",
+    excludedFromSpend: true,
     subcategories: [
       "Equity",
       "Mutual Funds",

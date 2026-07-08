@@ -38,10 +38,12 @@ import {
   sumPayments,
 } from "@/lib/overage";
 import { effectiveSpend } from "@/lib/recoverable";
+import { isCountedSpend } from "@/lib/spend";
 
 export interface CategoryWithSubs {
   id: string;
   name: string;
+  excludedFromSpend: boolean;
   subcategories: { id: string; name: string }[];
 }
 
@@ -51,6 +53,7 @@ async function revalidateAppPaths() {
   revalidatePath("/categories");
   revalidatePath("/recoverables");
   revalidatePath("/emis");
+  revalidatePath("/tracked");
 }
 
 export async function getTransactions(month?: number, year?: number) {
@@ -100,6 +103,7 @@ export async function getCategoriesWithSubs(): Promise<CategoryWithSubs[]> {
     return DEFAULT_CATEGORIES.map((c) => ({
       id: "",
       name: c.name,
+      excludedFromSpend: c.excludedFromSpend === true,
       subcategories: (c.subcategories ?? []).map((s) => ({ id: "", name: s })),
     }));
   }
@@ -107,8 +111,32 @@ export async function getCategoriesWithSubs(): Promise<CategoryWithSubs[]> {
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
+    excludedFromSpend: r.excluded_from_spend,
     subcategories: r.children.map((c) => ({ id: c.id, name: c.name })),
   }));
+}
+
+/**
+ * Names of parent categories flagged "tracked, not counted". Transactions in
+ * these categories are recorded but excluded from all spend totals.
+ */
+export async function getExcludedCategoryNames(): Promise<Set<string>> {
+  const rows = await prisma.category.findMany({
+    where: { parentId: null, excluded_from_spend: true },
+    select: { name: true },
+  });
+  return new Set(rows.map((r) => r.name));
+}
+
+export async function setCategoryExcludedFromSpend(
+  categoryId: string,
+  excluded: boolean
+) {
+  await prisma.category.update({
+    where: { id: categoryId },
+    data: { excluded_from_spend: excluded },
+  });
+  await revalidateAppPaths();
 }
 
 export async function getCategoryPromptData(): Promise<
@@ -1873,16 +1901,19 @@ export async function getEffectiveSpendForMonth(
   month: number,
   year: number
 ): Promise<number> {
-  const [transactions, emiInstallments] = await Promise.all([
+  const [transactions, emiInstallments, excluded] = await Promise.all([
     getTransactions(month, year),
     getEmiInstallmentsForMonth(month, year),
+    getExcludedCategoryNames(),
   ]);
 
   const txnSpend = transactions
-    .filter((t) => !t.is_cc_payment)
+    .filter((t) => isCountedSpend(t, excluded))
     .reduce((sum, t) => sum + effectiveSpend(t), 0);
 
-  const emiSpend = emiInstallments.reduce((sum, i) => sum + i.amount, 0);
+  const emiSpend = emiInstallments
+    .filter((i) => isCountedSpend({ ...i, is_cc_payment: false }, excluded))
+    .reduce((sum, i) => sum + i.amount, 0);
 
   return txnSpend + emiSpend;
 }

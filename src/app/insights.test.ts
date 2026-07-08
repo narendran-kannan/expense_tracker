@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   transactionFindMany,
+  categoryFindMany,
   insightFindUnique,
   insightUpsert,
   generateObjectMock,
@@ -9,6 +10,7 @@ const {
   googleMock,
 } = vi.hoisted(() => ({
   transactionFindMany: vi.fn(),
+  categoryFindMany: vi.fn().mockResolvedValue([]),
   insightFindUnique: vi.fn(),
   insightUpsert: vi.fn(),
   generateObjectMock: vi.fn(),
@@ -19,6 +21,7 @@ const {
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     transaction: { findMany: transactionFindMany },
+    category: { findMany: categoryFindMany },
     insight: { findUnique: insightFindUnique, upsert: insightUpsert },
   },
 }));

@@ -12,7 +12,7 @@ const DEFAULT_CATEGORIES = [
   { name: "Health & Fitness", subcategories: ["Gym", "Medicine", "Doctor", "Lab Tests", "Sports"] },
   { name: "Insurance", subcategories: ["Health", "Life", "Vehicle", "Home"] },
   { name: "Other" },
-  { name: "Savings & Investments", subcategories: ["Equity", "Mutual Funds", "Gold", "Fixed Deposit", "PPF", "NPS", "Bonds", "Crypto", "Real Estate"] },
+  { name: "Savings & Investments", excludedFromSpend: true, subcategories: ["Equity", "Mutual Funds", "Gold", "Fixed Deposit", "PPF", "NPS", "Bonds", "Crypto", "Real Estate"] },
   { name: "Shopping", subcategories: ["Clothing", "Electronics", "Home & Kitchen", "Personal Care"] },
   { name: "Transfer", subcategories: ["Family", "Friends", "Self"] },
   { name: "Transportation", subcategories: ["Cab", "Auto", "Metro", "Bus", "Fuel", "Parking", "Toll"] },
@@ -36,9 +36,11 @@ async function main() {
       let parentId = parentResult.rows[0]?.id;
       if (!parentId) {
         parentId = randomUUID();
+        // excluded_from_spend is set only on first insert; existing rows are
+        // never updated so user toggles are preserved across deploys.
         await client.query(
-          'INSERT INTO "Category" (id, name, "parentId") VALUES ($1, $2, $3)',
-          [parentId, category.name, null]
+          'INSERT INTO "Category" (id, name, "parentId", "excluded_from_spend") VALUES ($1, $2, $3, $4)',
+          [parentId, category.name, null, category.excludedFromSpend === true]
         );
         createdParents += 1;
       }

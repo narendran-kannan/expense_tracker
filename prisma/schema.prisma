@@ -8,11 +8,12 @@ datasource db {
 }
 
 model Category {
-  id        String     @id @default(uuid())
-  name      String
-  parentId  String?
-  parent    Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children  Category[] @relation("CategoryHierarchy")
+  id                  String     @id @default(uuid())
+  name                String
+  parentId            String?
+  excluded_from_spend Boolean    @default(false)
+  parent              Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children            Category[] @relation("CategoryHierarchy")
 
   transactionsAsCategory    Transaction[] @relation("TransactionCategory")
   transactionsAsSubcategory Transaction[] @relation("TransactionSubcategory")

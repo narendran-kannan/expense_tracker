@@ -5,8 +5,10 @@ import {
   getAvailableYears,
   getBudgetForMonth,
   getCachedInsight,
+  getExcludedCategoryNames,
 } from "@/app/actions";
 import { effectiveSpend } from "@/lib/recoverable";
+import { isCountedSpend, isTrackedNotCounted } from "@/lib/spend";
 import { InsightsCard } from "@/components/insights-card";
 import type { Period } from "@/lib/insights-period";
 import { Button } from "@/components/ui/button";
@@ -26,14 +28,38 @@ import {
   WeekdayHeatmap,
   YearOverYearChart,
   BudgetVsActualChart,
+  SpendVsTrackedChart,
+  CumulativeContributionChart,
 } from "@/components/analytics-charts";
+
+type SpendMode = "spend" | "tracked" | "all";
 
 interface StatsTransaction {
   amount: number;
+  category: string;
   is_cc_payment: boolean;
   recoverable_amount: number | null;
   recovery_status: string | null;
   repayments?: { amount: number }[];
+}
+
+/**
+ * Restrict rows to the selected spend mode. "spend" = counted expenses only,
+ * "tracked" = excluded-category rows only, "all" = both (CC payments always
+ * drop out — each chart already filters them, and totals never count them).
+ */
+function filterByMode<T extends { category: string; is_cc_payment: boolean }>(
+  rows: T[],
+  spendMode: SpendMode,
+  excluded: ReadonlySet<string>
+): T[] {
+  if (spendMode === "spend") {
+    return rows.filter((t) => isCountedSpend(t, excluded));
+  }
+  if (spendMode === "tracked") {
+    return rows.filter((t) => isTrackedNotCounted(t, excluded));
+  }
+  return rows.filter((t) => !t.is_cc_payment);
 }
 
 function computeStats(transactions: StatsTransaction[]) {
@@ -69,7 +95,8 @@ function serialize(
     recoverable_amount: number | null;
     recovery_status: string | null;
     repayments: { amount: number }[];
-  }[]
+  }[],
+  excluded: ReadonlySet<string>
 ) {
   return transactions.map((t) => ({
     id: t.id,
@@ -79,6 +106,7 @@ function serialize(
     category: t.category,
     subcategory: t.subcategoryRef?.name ?? null,
     is_cc_payment: t.is_cc_payment,
+    excluded: excluded.has(t.category),
   }));
 }
 
@@ -88,6 +116,7 @@ export default async function AnalyticsPage({
   searchParams: Promise<{
     view?: string;
     category_mode?: string;
+    mode?: string;
     month?: string;
     year?: string;
   }>;
@@ -104,12 +133,19 @@ export default async function AnalyticsPage({
     params.category_mode === "combined"
       ? params.category_mode
       : "combined";
+  const spendMode: SpendMode =
+    params.mode === "tracked" || params.mode === "all"
+      ? params.mode
+      : "spend";
   const month =
     params.month !== undefined ? parseInt(params.month, 10) : now.getMonth();
   const year =
     params.year !== undefined ? parseInt(params.year, 10) : now.getFullYear();
 
-  const availableYears = await getAvailableYears();
+  const [availableYears, excluded] = await Promise.all([
+    getAvailableYears(),
+    getExcludedCategoryNames(),
+  ]);
 
   if (mode === "monthly") {
     let prevMonth = month - 1;
@@ -138,12 +174,17 @@ export default async function AnalyticsPage({
       getCachedInsight(monthlyPeriod),
     ]);
 
-    const current = serialize(currentTxns);
-    const yearSerialized = serialize(yearTxns);
-    const prevYearSerialized = serialize(prevYearTxns);
+    const currentFiltered = filterByMode(currentTxns, spendMode, excluded);
+    const prevFiltered = filterByMode(prevTxns, spendMode, excluded);
+    const yearFiltered = filterByMode(yearTxns, spendMode, excluded);
+    const prevYearFiltered = filterByMode(prevYearTxns, spendMode, excluded);
 
-    const stats = computeStats(currentTxns);
-    const prevStats = computeStats(prevTxns);
+    const current = serialize(currentFiltered, excluded);
+    const yearSerialized = serialize(yearFiltered, excluded);
+    const prevYearSerialized = serialize(prevYearFiltered, excluded);
+
+    const stats = computeStats(currentFiltered);
+    const prevStats = computeStats(prevFiltered);
 
     const prevLabel = new Date(prevYear, prevMonth).toLocaleDateString(
       "en-IN",
@@ -188,6 +229,7 @@ export default async function AnalyticsPage({
           <AnalyticsPeriodSelector
             mode={mode}
             categoryMode={categoryMode}
+            spendMode={spendMode}
             month={month}
             year={year}
             availableYears={availableYears}
@@ -206,16 +248,29 @@ export default async function AnalyticsPage({
             prevPeriodLabel={prevLabel}
           />
 
-          <InsightsCard period={monthlyPeriod} initial={cachedInsight} />
+          {spendMode === "spend" && (
+            <InsightsCard period={monthlyPeriod} initial={cachedInsight} />
+          )}
 
           <Separator />
 
-          <MonthlyTrendChart transactions={yearSerialized} year={year} />
+          {spendMode === "all" ? (
+            <SpendVsTrackedChart transactions={yearSerialized} year={year} />
+          ) : (
+            <MonthlyTrendChart transactions={yearSerialized} year={year} />
+          )}
 
-          {budget && (
+          {spendMode !== "spend" && (
+            <CumulativeContributionChart
+              transactions={yearSerialized.filter((t) => t.excluded)}
+              year={year}
+            />
+          )}
+
+          {budget && spendMode === "spend" && (
             <BudgetVsActualChart
               budget={budget.amount}
-              spent={computeStats(currentTxns).totalSpend}
+              spent={stats.totalSpend}
               month={month}
               year={year}
             />
@@ -268,11 +323,14 @@ export default async function AnalyticsPage({
     ),
   ]);
 
-  const yearSerialized = serialize(yearTxns);
-  const prevYearSerialized = serialize(prevYearTxns);
+  const yearFiltered = filterByMode(yearTxns, spendMode, excluded);
+  const prevYearFiltered = filterByMode(prevYearTxns, spendMode, excluded);
 
-  const stats = computeStats(yearTxns);
-  const prevStats = computeStats(prevYearTxns);
+  const yearSerialized = serialize(yearFiltered, excluded);
+  const prevYearSerialized = serialize(prevYearFiltered, excluded);
+
+  const stats = computeStats(yearFiltered);
+  const prevStats = computeStats(prevYearFiltered);
 
   return (
     <div className="min-h-screen bg-background">
@@ -307,6 +365,7 @@ export default async function AnalyticsPage({
           <AnalyticsPeriodSelector
             mode={mode}
             categoryMode={categoryMode}
+            spendMode={spendMode}
             month={month}
             year={year}
             availableYears={availableYears}
@@ -327,7 +386,18 @@ export default async function AnalyticsPage({
 
         <Separator />
 
-        <MonthlyTrendChart transactions={yearSerialized} year={year} />
+        {spendMode === "all" ? (
+          <SpendVsTrackedChart transactions={yearSerialized} year={year} />
+        ) : (
+          <MonthlyTrendChart transactions={yearSerialized} year={year} />
+        )}
+
+        {spendMode !== "spend" && (
+          <CumulativeContributionChart
+            transactions={yearSerialized.filter((t) => t.excluded)}
+            year={year}
+          />
+        )}
 
           <div className="grid gap-6 lg:grid-cols-2">
             {categoryMode === "combined" ? (

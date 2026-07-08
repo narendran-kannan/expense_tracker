@@ -44,6 +44,8 @@ export interface AnalyticsTransaction {
   category: string;
   subcategory?: string | null;
   is_cc_payment: boolean;
+  /** True when the category is "tracked, not counted" (excluded from spend). */
+  excluded?: boolean;
 }
 
 export type AnalyticsCategoryMode = "parent" | "subcategory" | "combined";
@@ -996,6 +998,179 @@ export function BudgetVsActualChart({
             </p>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Combined ("Both") mode trend: monthly counted spend vs tracked (excluded-
+ * category) outflow as two distinct lines. Never merged into one total — the
+ * split is the whole point.
+ */
+export function SpendVsTrackedChart({
+  transactions,
+  year,
+}: {
+  transactions: AnalyticsTransaction[];
+  year: number;
+}) {
+  const rows = transactions.filter((t) => !t.is_cc_payment);
+
+  const spendMap = new Map<number, number>();
+  const trackedMap = new Map<number, number>();
+  for (const t of rows) {
+    const m = new Date(t.date).getMonth();
+    const target = t.excluded ? trackedMap : spendMap;
+    target.set(m, (target.get(m) || 0) + t.amount);
+  }
+
+  const data = Array.from({ length: 12 }, (_, i) => ({
+    month: new Date(year, i).toLocaleDateString("en-IN", { month: "short" }),
+    spend: spendMap.get(i) || 0,
+    tracked: trackedMap.get(i) || 0,
+  }));
+
+  const hasData = data.some((d) => d.spend > 0 || d.tracked > 0);
+
+  return (
+    <Card className="col-span-full">
+      <CardHeader>
+        <CardTitle>Expenses vs Tracked — {year}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!hasData ? (
+          <EmptyState message="No data for this year" />
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="month" fontSize={12} tickLine={false} />
+              <YAxis
+                fontSize={12}
+                tickLine={false}
+                tickFormatter={formatCompact}
+              />
+              <Tooltip
+                formatter={(value, name) => [
+                  formatINR(Number(value)),
+                  name === "spend" ? "Expenses" : "Tracked",
+                ]}
+                contentStyle={{
+                  borderRadius: "8px",
+                  border: "1px solid hsl(var(--border))",
+                }}
+              />
+              <Legend
+                formatter={(value) =>
+                  value === "spend" ? "Expenses" : "Tracked (set aside)"
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="spend"
+                stroke="hsl(221, 83%, 53%)"
+                strokeWidth={2}
+                dot={{ r: 3, fill: "hsl(221, 83%, 53%)" }}
+              />
+              <Line
+                type="monotone"
+                dataKey="tracked"
+                stroke="hsl(142, 71%, 45%)"
+                strokeWidth={2}
+                dot={{ r: 3, fill: "hsl(142, 71%, 45%)" }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Running total of tracked (excluded-category) contributions over a year —
+ * "watch it grow". Shows money set aside, not portfolio value: the app only
+ * sees debits, so market gains are invisible by design.
+ */
+export function CumulativeContributionChart({
+  transactions,
+  year,
+}: {
+  transactions: AnalyticsTransaction[];
+  year: number;
+}) {
+  const rows = transactions.filter((t) => !t.is_cc_payment);
+
+  const monthlyMap = new Map<number, number>();
+  for (const t of rows) {
+    const m = new Date(t.date).getMonth();
+    monthlyMap.set(m, (monthlyMap.get(m) || 0) + t.amount);
+  }
+
+  const now = new Date();
+  const lastMonth =
+    year === now.getFullYear() ? now.getMonth() : year < now.getFullYear() ? 11 : -1;
+
+  const cumulativeByMonth = Array.from({ length: 12 }).reduce<number[]>(
+    (acc, _, i) => {
+      acc.push((i > 0 ? acc[i - 1] : 0) + (monthlyMap.get(i) || 0));
+      return acc;
+    },
+    []
+  );
+
+  const data = Array.from({ length: 12 }, (_, i) => ({
+    month: new Date(year, i).toLocaleDateString("en-IN", { month: "short" }),
+    cumulative: i <= lastMonth ? cumulativeByMonth[i] : null,
+    monthly: monthlyMap.get(i) || 0,
+  }));
+
+  const hasData = cumulativeByMonth[11] > 0;
+
+  return (
+    <Card className="col-span-full">
+      <CardHeader>
+        <CardTitle>Cumulative Contributions — {year}</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Running total of money set aside (contributions, not market value)
+        </p>
+      </CardHeader>
+      <CardContent>
+        {!hasData ? (
+          <EmptyState message="No tracked contributions this year" />
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="month" fontSize={12} tickLine={false} />
+              <YAxis
+                fontSize={12}
+                tickLine={false}
+                tickFormatter={formatCompact}
+              />
+              <Tooltip
+                formatter={(value, name) => [
+                  formatINR(Number(value)),
+                  name === "cumulative" ? "Total set aside" : "This month",
+                ]}
+                contentStyle={{
+                  borderRadius: "8px",
+                  border: "1px solid hsl(var(--border))",
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="cumulative"
+                stroke="hsl(142, 71%, 45%)"
+                strokeWidth={2}
+                fill="hsl(142, 71%, 45%)"
+                fillOpacity={0.15}
+                connectNulls={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </CardContent>
     </Card>
   );

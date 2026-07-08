@@ -64,10 +64,20 @@ export async function computeInsightStats(
 ): Promise<InsightStats> {
   const { start, end, previousStart, previousEnd } = periodBounds(period);
 
-  const [current, previous] = await Promise.all([
+  const [current, previous, excludedRows] = await Promise.all([
     getSpreadTransactions(start, end),
     getSpreadTransactions(previousStart, previousEnd),
+    prisma.category.findMany({
+      where: { parentId: null, excluded_from_spend: true },
+      select: { name: true },
+    }),
   ]);
 
-  return computeStatsFromTransactions(period, current, previous);
+  // Insights describe counted spend only; "tracked, not counted" categories
+  // (e.g. Savings & Investments) are excluded to match dashboard/analytics.
+  const excluded = new Set(excludedRows.map((r) => r.name));
+  const counted = (rows: typeof current) =>
+    rows.filter((t) => !excluded.has(t.category));
+
+  return computeStatsFromTransactions(period, counted(current), counted(previous));
 }

@@ -13,6 +13,7 @@ import {
   HandCoins,
   LayoutDashboard,
   Menu,
+  PiggyBank,
   Upload,
   Wallet,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import {
 const PRIMARY_NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/tracked", label: "Tracked", icon: PiggyBank },
   { href: "/recoverables", label: "Recoverables", icon: HandCoins },
   { href: "/emis", label: "EMIs", icon: CalendarClock },
   { href: "/carryover", label: "Carryover", icon: Wallet },

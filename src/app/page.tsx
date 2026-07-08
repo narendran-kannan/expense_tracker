@@ -9,8 +9,11 @@ import {
   getKnownCounterparties,
   getEmiInstallmentsForMonth,
   getCarryoverSummary,
+  getExcludedCategoryNames,
 } from "./actions";
+import Link from "next/link";
 import { effectiveSpend } from "@/lib/recoverable";
+import { isCountedSpend, isTrackedNotCounted } from "@/lib/spend";
 import { OutstandingCard } from "@/components/outstanding-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,6 +63,7 @@ export default async function Dashboard({
     knownCounterparties,
     emiInstallments,
     carryover,
+    excludedCategories,
   ] = await Promise.all([
     getTransactions(month, year),
     getCategoriesWithSubs(),
@@ -69,6 +73,7 @@ export default async function Dashboard({
     getKnownCounterparties(),
     getEmiInstallmentsForMonth(month, year),
     getCarryoverSummary(),
+    getExcludedCategoryNames(),
   ] as const);
 
   const carryoverMonthsOwing = carryover.months.filter(
@@ -76,11 +81,15 @@ export default async function Dashboard({
   ).length;
 
   const spendingTxns = transactions
-    .filter((t) => !t.is_cc_payment)
+    .filter((t) => isCountedSpend(t, excludedCategories))
     .map((t) => ({ t, effective: effectiveSpend(t) }))
     .filter((entry) => entry.effective > 0);
 
-  const emiInstallmentTotal = emiInstallments.reduce(
+  const countedEmiInstallments = emiInstallments.filter((i) =>
+    isCountedSpend({ ...i, is_cc_payment: false }, excludedCategories)
+  );
+
+  const emiInstallmentTotal = countedEmiInstallments.reduce(
     (sum, i) => sum + i.amount,
     0
   );
@@ -89,7 +98,18 @@ export default async function Dashboard({
     spendingTxns.reduce((sum, entry) => sum + entry.effective, 0) +
     emiInstallmentTotal;
 
-  const totalTransactions = spendingTxns.length + emiInstallments.length;
+  // Tracked, not counted: excluded-category outflows (e.g. investments).
+  const trackedTotal =
+    transactions
+      .filter((t) => isTrackedNotCounted(t, excludedCategories))
+      .reduce((sum, t) => sum + effectiveSpend(t), 0) +
+    emiInstallments
+      .filter((i) =>
+        isTrackedNotCounted({ ...i, is_cc_payment: false }, excludedCategories)
+      )
+      .reduce((sum, i) => sum + i.amount, 0);
+
+  const totalTransactions = spendingTxns.length + countedEmiInstallments.length;
   const pendingReviews = transactions.filter((t) => t.needs_review).length;
   const avgTransaction =
     totalTransactions > 0 ? totalSpend / totalTransactions : 0;
@@ -109,12 +129,25 @@ export default async function Dashboard({
     })),
   }));
 
+  // The dashboard table hides tracked (excluded-category) rows — they live on
+  // /tracked. CC payments stay visible here as before (excluded from totals
+  // only). Pending reviews keeps ALL rows so misfiled tracked transactions
+  // still surface for correction.
+  const serializedCounted = serialized.filter(
+    (t) => !isTrackedNotCounted(t, excludedCategories)
+  );
+  const countedEmiInstallmentDtos = emiInstallments.filter(
+    (i) =>
+      !isTrackedNotCounted({ ...i, is_cc_payment: false }, excludedCategories)
+  );
+
   // For charts, use the effective spend amount so recoverables/EMIs don't
   // inflate category/day totals. Fully-recovered transactions are filtered out.
   // Virtual EMI installments are appended so future/past months reflect
   // committed EMI spend.
   const chartData = [
     ...transactions
+      .filter((t) => !isTrackedNotCounted(t, excludedCategories))
       .map((t) => ({
         id: t.id,
         amount: effectiveSpend(t),
@@ -127,7 +160,7 @@ export default async function Dashboard({
         needs_review: t.needs_review,
       }))
       .filter((t) => t.amount > 0 || t.is_cc_payment),
-    ...emiInstallments.map((i) => ({
+    ...countedEmiInstallmentDtos.map((i) => ({
       id: i.id,
       amount: i.amount,
       merchant: i.merchant,
@@ -207,6 +240,14 @@ export default async function Dashboard({
               <p className="text-xs text-muted-foreground">
                 Excludes credit card payments
               </p>
+              {trackedTotal > 0 && (
+                <Link
+                  href="/tracked"
+                  className="mt-1 block text-xs text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  ↗ {formatINR(trackedTotal)} set aside this month
+                </Link>
+              )}
             </CardContent>
           </Card>
 
@@ -304,10 +345,10 @@ export default async function Dashboard({
           </TabsContent>
           <TabsContent value="all" className="mt-4">
             <TransactionTable
-              transactions={serialized}
+              transactions={serializedCounted}
               categories={categories}
               knownCounterparties={knownCounterparties}
-              emiInstallments={emiInstallments}
+              emiInstallments={countedEmiInstallmentDtos}
             />
           </TabsContent>
           <TabsContent value="skipped" className="mt-4">

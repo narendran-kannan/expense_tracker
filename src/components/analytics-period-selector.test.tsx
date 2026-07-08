@@ -21,6 +21,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="monthly"
           categoryMode="combined"
+          spendMode="spend"
           month={2}
         year={2026}
         availableYears={[2026, 2025]}
@@ -39,6 +40,7 @@ describe("AnalyticsPeriodSelector", () => {
       <AnalyticsPeriodSelector
         mode="monthly"
         categoryMode="combined"
+          spendMode="spend"
         month={2}
         year={2026}
         availableYears={[2026, 2025]}
@@ -59,6 +61,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="monthly"
           categoryMode="combined"
+          spendMode="spend"
           month={2}
         year={2026}
         availableYears={[2026, 2025]}
@@ -79,6 +82,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="monthly"
           categoryMode="combined"
+          spendMode="spend"
           month={2}
         year={2026}
         availableYears={[2026, 2025]}
@@ -106,6 +110,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="monthly"
           categoryMode="combined"
+          spendMode="spend"
           month={0}
         year={2026}
         availableYears={[2026, 2025]}
@@ -133,6 +138,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="monthly"
           categoryMode="combined"
+          spendMode="spend"
           month={now.getMonth()}
         year={now.getFullYear()}
         availableYears={[now.getFullYear()]}
@@ -154,6 +160,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="monthly"
           categoryMode="combined"
+          spendMode="spend"
           month={2}
         year={2026}
         availableYears={[2026, 2025]}
@@ -172,6 +179,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="yearly"
           categoryMode="combined"
+          spendMode="spend"
           month={2}
         year={2026}
         availableYears={[2026, 2025]}
@@ -188,6 +196,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="yearly"
           categoryMode="combined"
+          spendMode="spend"
           month={0}
         year={now.getFullYear()}
         availableYears={[now.getFullYear(), now.getFullYear() - 1]}
@@ -209,6 +218,7 @@ describe("AnalyticsPeriodSelector", () => {
         <AnalyticsPeriodSelector
           mode="yearly"
           categoryMode="combined"
+          spendMode="spend"
           month={0}
         year={2026}
         availableYears={[2026, 2025]}

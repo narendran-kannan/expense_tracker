@@ -7,9 +7,11 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 export function MonthSwitcher({
   month,
   year,
+  basePath = "/",
 }: {
   month: number;
   year: number;
+  basePath?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -38,7 +40,7 @@ export function MonthSwitcher({
     const params = new URLSearchParams(searchParams.toString());
     params.set("month", String(newMonth));
     params.set("year", String(newYear));
-    router.push(`/?${params.toString()}`);
+    router.push(`${basePath}?${params.toString()}`);
   }
 
   const shortLabel = new Date(year, month).toLocaleDateString("en-IN", {
