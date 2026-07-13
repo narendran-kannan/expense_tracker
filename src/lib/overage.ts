@@ -7,10 +7,15 @@
  * image of `recoverable.ts`: instead of money owed TO the user, it tracks money
  * the user owes because a month ran over budget.
  *
- * The overage amount is normally DERIVED live (`spent - budget`) so it stays
- * correct if the budget or transactions are edited retroactively. A manual
- * `override_amount` can pin it when the user knows the real figure differs.
- * Payments are logged independently and always persist.
+ * The overage amount is SNAPSHOTTED (`computed_amount`) when a closed month is
+ * first recorded, so retroactive budget/transaction edits never silently change
+ * what is owed. The live-derived value (`spent - budget`) is still computed on
+ * every read; when it drifts from the snapshot the UI surfaces the difference
+ * and the user explicitly accepts the recomputed amount. A manual
+ * `override_amount` wins over both. Payments are logged independently and
+ * always persist.
+ *
+ * Precedence: override_amount > computed_amount (snapshot) > derived live.
  */
 
 export const OVERAGE_STATUS = {
@@ -36,8 +41,10 @@ export function isOverageStatus(value: unknown): value is OverageStatus {
 }
 
 export interface OverageInput {
-  /** Manual override; when set it wins over the derived amount. */
+  /** Manual override; when set it wins over everything else. */
   override_amount: number | null;
+  /** Snapshot taken when the closed month was recorded; wins over derived. */
+  computed_amount?: number | null;
   /** Budget for the period (derived source). */
   budget_amount: number;
   /** Effective spend for the period (derived source). */
@@ -46,16 +53,49 @@ export interface OverageInput {
 }
 
 /**
- * The gross overage for a period before any payments: the manual override when
- * set, otherwise `max(0, spent - budget)`. Never negative.
+ * The live-derived overage from budget and spend: `max(0, spent - budget)`.
+ * Ignores override and snapshot — used to detect drift against the snapshot.
+ */
+export function derivedOverage(t: {
+  budget_amount: number;
+  spent_amount: number;
+}): number {
+  return Math.max(0, t.spent_amount - t.budget_amount);
+}
+
+/**
+ * The gross overage for a period before any payments, by precedence:
+ * manual override, then the stored snapshot, then the live-derived value.
+ * Never negative.
  */
 export function grossOverage(t: {
   override_amount: number | null;
+  computed_amount?: number | null;
   budget_amount: number;
   spent_amount: number;
 }): number {
   if (t.override_amount != null) return Math.max(0, t.override_amount);
-  return Math.max(0, t.spent_amount - t.budget_amount);
+  if (t.computed_amount != null) return Math.max(0, t.computed_amount);
+  return derivedOverage(t);
+}
+
+/**
+ * Difference between what the snapshot says is owed and what budget/spend
+ * derive right now: `derived - snapshot`. Zero when there is no snapshot, when
+ * a manual override pins the amount (drift is irrelevant then), or when the
+ * values agree within a rounding epsilon. Negative = derived is now lower
+ * (e.g. budget raised retroactively); positive = derived is now higher.
+ */
+export function overageDrift(t: {
+  override_amount: number | null;
+  computed_amount?: number | null;
+  budget_amount: number;
+  spent_amount: number;
+}): number {
+  if (t.override_amount != null) return 0;
+  if (t.computed_amount == null) return 0;
+  const drift = derivedOverage(t) - Math.max(0, t.computed_amount);
+  return Math.abs(drift) < 0.005 ? 0 : Math.round(drift * 100) / 100;
 }
 
 export function sumPayments(payments?: { amount: number }[]): number {

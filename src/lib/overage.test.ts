@@ -3,9 +3,11 @@ import {
   OVERAGE_STATUS,
   allocateWaterfall,
   computeOverageStatus,
+  derivedOverage,
   grossOverage,
   isOverageStatus,
   outstandingOverage,
+  overageDrift,
   sumPayments,
 } from "./overage";
 
@@ -54,6 +56,130 @@ describe("grossOverage", () => {
   it("treats an override of 0 as an explicit zero (not derived)", () => {
     expect(
       grossOverage({ override_amount: 0, budget_amount: 10000, spent_amount: 14200 })
+    ).toBe(0);
+  });
+
+  it("uses the stored snapshot over the derived value", () => {
+    expect(
+      grossOverage({
+        override_amount: null,
+        computed_amount: 7000,
+        budget_amount: 55000,
+        spent_amount: 57000,
+      })
+    ).toBe(7000);
+  });
+
+  it("prefers override over snapshot", () => {
+    expect(
+      grossOverage({
+        override_amount: 1234,
+        computed_amount: 7000,
+        budget_amount: 50000,
+        spent_amount: 57000,
+      })
+    ).toBe(1234);
+  });
+
+  it("clamps a negative snapshot to 0", () => {
+    expect(
+      grossOverage({
+        override_amount: null,
+        computed_amount: -100,
+        budget_amount: 10000,
+        spent_amount: 14200,
+      })
+    ).toBe(0);
+  });
+
+  it("falls back to derived when snapshot is null", () => {
+    expect(
+      grossOverage({
+        override_amount: null,
+        computed_amount: null,
+        budget_amount: 10000,
+        spent_amount: 14200,
+      })
+    ).toBe(4200);
+  });
+});
+
+describe("derivedOverage", () => {
+  it("is spent minus budget, floored at 0", () => {
+    expect(derivedOverage({ budget_amount: 50000, spent_amount: 57000 })).toBe(
+      7000
+    );
+    expect(derivedOverage({ budget_amount: 50000, spent_amount: 40000 })).toBe(
+      0
+    );
+  });
+});
+
+describe("overageDrift", () => {
+  it("is 0 when there is no snapshot", () => {
+    expect(
+      overageDrift({
+        override_amount: null,
+        computed_amount: null,
+        budget_amount: 50000,
+        spent_amount: 57000,
+      })
+    ).toBe(0);
+  });
+
+  it("is 0 when an override pins the amount", () => {
+    expect(
+      overageDrift({
+        override_amount: 5000,
+        computed_amount: 7000,
+        budget_amount: 55000,
+        spent_amount: 57000,
+      })
+    ).toBe(0);
+  });
+
+  it("is 0 when derived matches the snapshot", () => {
+    expect(
+      overageDrift({
+        override_amount: null,
+        computed_amount: 7000,
+        budget_amount: 50000,
+        spent_amount: 57000,
+      })
+    ).toBe(0);
+  });
+
+  it("is negative when a retroactive budget raise lowers the derived value", () => {
+    // The reported bug: budget retroactively 50k -> 55k made 5,000 vanish.
+    expect(
+      overageDrift({
+        override_amount: null,
+        computed_amount: 7000,
+        budget_amount: 55000,
+        spent_amount: 57000,
+      })
+    ).toBe(-5000);
+  });
+
+  it("is positive when late transactions raise the derived value", () => {
+    expect(
+      overageDrift({
+        override_amount: null,
+        computed_amount: 7000,
+        budget_amount: 50000,
+        spent_amount: 59500,
+      })
+    ).toBe(2500);
+  });
+
+  it("ignores sub-paisa float noise", () => {
+    expect(
+      overageDrift({
+        override_amount: null,
+        computed_amount: 7000.001,
+        budget_amount: 50000,
+        spent_amount: 57000,
+      })
     ).toBe(0);
   });
 });

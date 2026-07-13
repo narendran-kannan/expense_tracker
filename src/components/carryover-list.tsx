@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import {
+  acceptOverageRecomputation,
   addOveragePayment,
   deleteOveragePayment,
   setOverageOverride,
@@ -25,7 +26,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { OVERAGE_STATUS } from "@/lib/overage";
-import { Plus, Trash2, Pencil, Check, X } from "lucide-react";
+import { Plus, Trash2, Pencil, Check, X, TriangleAlert } from "lucide-react";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -291,6 +292,57 @@ function OverrideEditor({ overage }: { overage: CarryoverMonthDTO }) {
   );
 }
 
+function DriftNotice({ overage }: { overage: CarryoverMonthDTO }) {
+  const [isAccepting, startTransition] = useTransition();
+
+  if (overage.drift === 0) return null;
+
+  const derived = Math.max(
+    0,
+    overage.spent_amount - overage.budget_amount
+  );
+  const direction = overage.drift < 0 ? "lower" : "higher";
+
+  const accept = () => {
+    startTransition(async () => {
+      try {
+        await acceptOverageRecomputation(overage.id);
+      } catch (error) {
+        alert(
+          `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+    });
+  };
+
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+    >
+      <div className="flex items-start gap-2">
+        <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <p>
+          Budget or transactions changed since this month was recorded: the
+          recalculated overspend is <strong>{formatINR(derived)}</strong> (
+          {formatINR(Math.abs(overage.drift))} {direction}). The recorded
+          amount of <strong>{formatINR(overage.computed_amount ?? 0)}</strong>{" "}
+          is kept until you accept the change.
+        </p>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 border-amber-300 text-xs"
+        onClick={accept}
+        disabled={isAccepting}
+      >
+        {isAccepting ? "Updating..." : `Use ${formatINR(derived)}`}
+      </Button>
+    </div>
+  );
+}
+
 function PaymentRow({ payment }: { payment: CarryoverMonthDTO["payments"][number] }) {
   const [isDeleting, startTransition] = useTransition();
 
@@ -343,6 +395,7 @@ export function CarryoverMonthCard({ overage }: { overage: CarryoverMonthDTO }) 
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <DriftNotice overage={overage} />
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
             <p className="text-xs text-muted-foreground">Overspend</p>

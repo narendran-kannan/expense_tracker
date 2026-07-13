@@ -35,6 +35,7 @@ import {
   computeOverageStatus,
   grossOverage,
   outstandingOverage,
+  overageDrift,
   sumPayments,
 } from "@/lib/overage";
 import { effectiveSpend } from "@/lib/recoverable";
@@ -1920,9 +1921,12 @@ export async function getEffectiveSpendForMonth(
 
 /**
  * Lazily create a BudgetOverage row for every CLOSED month that ran over budget
- * and does not already have one. Idempotent: never touches existing rows (so
- * manual overrides, owed_to labels, and payments are preserved), and never
- * creates rows for the current/future month or for months with no budget.
+ * and does not already have one, snapshotting the overage into
+ * `computed_amount` at creation time so later budget/transaction edits never
+ * silently change what is owed. Also backfills the snapshot (once) for legacy
+ * rows created before `computed_amount` existed. Idempotent otherwise: never
+ * touches overrides, owed_to labels, or payments, and never creates rows for
+ * the current/future month or for months with no budget.
  */
 export async function syncClosedOverages(): Promise<void> {
   const budgets = await prisma.budget.findMany({
@@ -1931,7 +1935,7 @@ export async function syncClosedOverages(): Promise<void> {
   if (budgets.length === 0) return;
 
   const existing = await prisma.budgetOverage.findMany({
-    select: { month: true, year: true },
+    select: { id: true, month: true, year: true, computed_amount: true },
   });
   const have = new Set(existing.map((o) => `${o.year}-${o.month}`));
 
@@ -1940,7 +1944,8 @@ export async function syncClosedOverages(): Promise<void> {
   let cursor = new Date(earliest.start_year, earliest.start_month, 1);
   const stop = new Date(now.getFullYear(), now.getMonth(), 1); // exclusive: current month
 
-  const toCreate: { month: number; year: number }[] = [];
+  const toCreate: { month: number; year: number; computed_amount: number }[] =
+    [];
   while (cursor < stop) {
     const month = cursor.getMonth();
     const year = cursor.getFullYear();
@@ -1949,7 +1954,11 @@ export async function syncClosedOverages(): Promise<void> {
       if (budget) {
         const spent = await getEffectiveSpendForMonth(month, year);
         if (spent > budget.amount) {
-          toCreate.push({ month, year });
+          toCreate.push({
+            month,
+            year,
+            computed_amount: Math.round((spent - budget.amount) * 100) / 100,
+          });
         }
       }
     }
@@ -1961,9 +1970,23 @@ export async function syncClosedOverages(): Promise<void> {
       data: toCreate.map((c) => ({
         month: c.month,
         year: c.year,
+        computed_amount: c.computed_amount,
         status: OVERAGE_STATUS.OUTSTANDING,
       })),
       skipDuplicates: true,
+    });
+  }
+
+  // One-time lazy backfill: legacy rows predate the snapshot column. Freeze
+  // the current derived value so they stop floating from here on.
+  const legacy = existing.filter((o) => o.computed_amount == null);
+  for (const row of legacy) {
+    const budget = await getBudgetForMonth(row.month, row.year);
+    const spent = await getEffectiveSpendForMonth(row.month, row.year);
+    const derived = Math.max(0, spent - (budget?.amount ?? 0));
+    await prisma.budgetOverage.update({
+      where: { id: row.id },
+      data: { computed_amount: Math.round(derived * 100) / 100 },
     });
   }
 }
@@ -1975,6 +1998,13 @@ export interface CarryoverMonthDTO {
   budget_amount: number;
   spent_amount: number;
   gross_overage: number;
+  computed_amount: number | null;
+  /**
+   * `derived - snapshot`: non-zero when retroactive budget/transaction edits
+   * make the live-derived overage disagree with the recorded amount. The UI
+   * surfaces this and lets the user accept the recomputed value.
+   */
+  drift: number;
   override_amount: number | null;
   owed_to: string | null;
   outstanding: number;
@@ -2017,15 +2047,23 @@ export async function getCarryoverSummary(): Promise<CarryoverSummary> {
 
     const gross = grossOverage({
       override_amount: row.override_amount,
+      computed_amount: row.computed_amount,
       budget_amount: budgetAmount,
       spent_amount: spent,
     });
     const paid = sumPayments(row.payments);
     const outstanding = outstandingOverage({
       override_amount: row.override_amount,
+      computed_amount: row.computed_amount,
       budget_amount: budgetAmount,
       spent_amount: spent,
       payments: row.payments,
+    });
+    const drift = overageDrift({
+      override_amount: row.override_amount,
+      computed_amount: row.computed_amount,
+      budget_amount: budgetAmount,
+      spent_amount: spent,
     });
 
     months.push({
@@ -2035,6 +2073,8 @@ export async function getCarryoverSummary(): Promise<CarryoverSummary> {
       budget_amount: budgetAmount,
       spent_amount: spent,
       gross_overage: gross,
+      computed_amount: row.computed_amount,
+      drift,
       override_amount: row.override_amount,
       owed_to: row.owed_to,
       outstanding,
@@ -2068,6 +2108,7 @@ async function syncOverageStatus(overageId: string): Promise<void> {
   const spent = await getEffectiveSpendForMonth(row.month, row.year);
   const gross = grossOverage({
     override_amount: row.override_amount,
+    computed_amount: row.computed_amount,
     budget_amount: budget?.amount ?? 0,
     spent_amount: spent,
   });
@@ -2077,6 +2118,32 @@ async function syncOverageStatus(overageId: string): Promise<void> {
     where: { id: overageId },
     data: { status: computeOverageStatus(gross, paid) },
   });
+}
+
+/**
+ * Re-snapshot an overage to the CURRENT live-derived value (`spent - budget`).
+ * Called when the user explicitly accepts a drifted recomputation — the only
+ * way a recorded carryover amount changes after creation (short of a manual
+ * override).
+ */
+export async function acceptOverageRecomputation(
+  overageId: string
+): Promise<void> {
+  const row = await prisma.budgetOverage.findUnique({
+    where: { id: overageId },
+  });
+  if (!row) throw new Error("Overage not found");
+
+  const budget = await getBudgetForMonth(row.month, row.year);
+  const spent = await getEffectiveSpendForMonth(row.month, row.year);
+  const derived = Math.max(0, spent - (budget?.amount ?? 0));
+
+  await prisma.budgetOverage.update({
+    where: { id: overageId },
+    data: { computed_amount: Math.round(derived * 100) / 100 },
+  });
+  await syncOverageStatus(overageId);
+  await revalidateAppPaths();
 }
 
 export async function addOveragePayment(

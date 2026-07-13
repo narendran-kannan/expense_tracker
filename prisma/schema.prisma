@@ -85,6 +85,7 @@ model BudgetOverage {
   id             String           @id @default(uuid())
   month          Int
   year           Int
+  computed_amount Float?
   override_amount Float?
   owed_to        String?
   status         String           @default("outstanding")

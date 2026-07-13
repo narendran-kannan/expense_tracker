@@ -5,6 +5,7 @@ import { CarryoverMonthCard } from "@/components/carryover-list";
 import type { CarryoverMonthDTO } from "@/app/actions";
 
 vi.mock("@/app/actions", () => ({
+  acceptOverageRecomputation: vi.fn(),
   addOveragePayment: vi.fn(),
   deleteOveragePayment: vi.fn(),
   setOverageOverride: vi.fn(),
@@ -19,6 +20,8 @@ function makeOverage(overrides: Partial<CarryoverMonthDTO> = {}): CarryoverMonth
     budget_amount: 10000,
     spent_amount: 16450,
     gross_overage: 6450,
+    computed_amount: 6450,
+    drift: 0,
     override_amount: null,
     owed_to: null,
     outstanding: 6450,
@@ -145,5 +148,59 @@ describe("CarryoverMonthCard", () => {
 
     await user.click(screen.getByRole("button", { name: /delete payment/i }));
     expect(deleteOveragePayment).toHaveBeenCalledWith("pay-1");
+  });
+
+  it("shows no drift notice when snapshot and derived agree", () => {
+    render(<CarryoverMonthCard overage={makeOverage()} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the recorded amount and surfaces a drift notice when derived shrinks", async () => {
+    const { acceptOverageRecomputation } = await import("@/app/actions");
+    const user = userEvent.setup();
+
+    // Recorded ₹7,000 overspend; budget later raised so derived is only ₹2,000.
+    render(
+      <CarryoverMonthCard
+        overage={makeOverage({
+          budget_amount: 55000,
+          spent_amount: 57000,
+          computed_amount: 7000,
+          gross_overage: 7000,
+          outstanding: 7000,
+          drift: -5000,
+        })}
+      />
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("₹2,000");
+    expect(alert.textContent).toContain("₹5,000");
+    expect(alert.textContent).toContain("lower");
+    expect(alert.textContent).toContain("₹7,000");
+
+    await user.click(screen.getByRole("button", { name: /use ₹2,000/i }));
+    expect(acceptOverageRecomputation).toHaveBeenCalledWith("ov-feb");
+  });
+
+  it("surfaces a drift notice when derived grows", () => {
+    render(
+      <CarryoverMonthCard
+        overage={makeOverage({
+          budget_amount: 10000,
+          spent_amount: 19000,
+          computed_amount: 6450,
+          gross_overage: 6450,
+          outstanding: 6450,
+          drift: 2550,
+        })}
+      />
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("higher");
+    expect(
+      screen.getByRole("button", { name: /use ₹9,000/i })
+    ).toBeInTheDocument();
   });
 });
