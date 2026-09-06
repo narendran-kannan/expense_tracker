@@ -124,3 +124,91 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Mobile UX redesign tokens. Warm cream/ink palette + Manrope, scoped to the
+ * mobile shell via the `.mobile-shell` class so the desktop dashboard keeps
+ * the neutral shadcn look untouched.
+ * ------------------------------------------------------------------------- */
+.mobile-shell {
+  --m-ink: #14130f;
+  --m-ink-raised: #1c1a16;
+  --m-ink-line: #332f29;
+  --m-ink-muted: #a8a29a;
+  --m-text-secondary: #57534c;
+  --m-text-tertiary: #77736b;
+  --m-text-quaternary: #9c968d;
+  --m-canvas: #fbfaf8;
+  --m-surface: #ffffff;
+  --m-surface-sunken: #f7f6f3;
+  --m-fill-subtle: #f0eeea;
+  --m-fill-strong: #efedea;
+  --m-border: #e8e5e0;
+  --m-border-strong: #e3e0db;
+  --m-accent: oklch(0.55 0.16 258);
+  --m-warn: oklch(0.82 0.13 90);
+  --m-warn-border: oklch(0.86 0.09 75);
+  --m-warn-surface: oklch(0.93 0.06 75);
+  --m-warn-glyph: oklch(0.5 0.13 60);
+  --m-danger: oklch(0.5 0.18 25);
+  --m-danger-border: oklch(0.85 0.08 25);
+  --m-danger-surface: oklch(0.94 0.05 30);
+  --m-danger-glyph: oklch(0.45 0.15 30);
+  --m-positive: oklch(0.45 0.12 160);
+  --m-positive-surface: oklch(0.94 0.05 160);
+
+  font-family: var(--font-manrope), "Helvetica", "Arial", sans-serif;
+  background: var(--m-canvas);
+  color: var(--m-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.mobile-shell .m-tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-shell .m-noscroll {
+  scrollbar-width: none;
+}
+.mobile-shell .m-noscroll::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes m-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.m-anim-sheet {
+  animation: m-sheet-up 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.m-anim-fade {
+  animation: m-fade 0.18s ease;
+}
+.m-anim-overlay {
+  animation: m-fade 0.2s ease;
+}
+
+/* ---------------------------------------------------------------------------
+ * View-mode override. Below the md breakpoint the user can force the desktop
+ * layout (persisted in localStorage, applied pre-hydration via
+ * html[data-view]). Above md the desktop layout always shows regardless.
+ * The [data-view] wrappers use !important to beat Tailwind's md: utilities.
+ * ------------------------------------------------------------------------- */
+html[data-view="desktop"] [data-view-mobile] {
+  display: none !important;
+}
+html[data-view="desktop"] [data-view-desktop] {
+  display: block !important;
+}

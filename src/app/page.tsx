@@ -30,6 +30,14 @@ import { SetBudgetDialog } from "@/components/set-budget-dialog";
 import { BudgetCard } from "@/components/budget-card";
 import { CarryoverCard } from "@/components/carryover-card";
 import { NavBar } from "@/components/nav-bar";
+import { MobileDashboard } from "@/components/mobile/mobile-dashboard";
+import { SwitchToMobileButton } from "@/components/mobile/view-mode";
+import type {
+  MobileCategorySlice,
+  MobileDaySpend,
+  MobileMoreItem,
+  MobileTransaction,
+} from "@/components/mobile/mobile-types";
 
 function formatINR(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -178,8 +186,150 @@ export default async function Dashboard({
     created_at: s.created_at.toISOString(),
   }));
 
+  // ---- Mobile dashboard derived data (rendered only below md) ----
+  const mobileTransactions: MobileTransaction[] = [
+    ...serializedCounted.map((t) => ({
+      id: t.id,
+      amount: t.amount,
+      effectiveAmount: effectiveSpend(t),
+      merchant: t.merchant,
+      date: t.date,
+      category: t.category,
+      subcategory: t.subcategory,
+      is_cc_payment: t.is_cc_payment,
+      confidence_score: t.confidence_score,
+      needs_review: t.needs_review,
+      remarks: t.remarks,
+      is_emi: t.is_emi,
+      recoverable_amount: t.recoverable_amount,
+    })),
+    ...countedEmiInstallmentDtos.map((i) => ({
+      id: i.id,
+      amount: i.amount,
+      effectiveAmount: i.amount,
+      merchant: i.merchant,
+      date: i.date,
+      category: i.category,
+      subcategory: i.subcategory,
+      is_cc_payment: false,
+      confidence_score: 1,
+      needs_review: false,
+      remarks: null,
+      isEmiInstallment: true,
+    })),
+  ];
+
+  const categoryTotals = new Map<string, number>();
+  for (const t of chartData) {
+    if (t.is_cc_payment || t.amount <= 0) continue;
+    categoryTotals.set(
+      t.category,
+      (categoryTotals.get(t.category) ?? 0) + t.amount
+    );
+  }
+  const categorySum = [...categoryTotals.values()].reduce((a, b) => a + b, 0);
+  const categorySlices: MobileCategorySlice[] = [...categoryTotals.entries()]
+    .map(([name, amount]) => ({
+      name,
+      amount,
+      pct: categorySum > 0 ? Math.round((amount / categorySum) * 100) : 0,
+    }))
+    .sort((a, b) => b.amount - a.amount);
+
+  const dayTotals = new Map<string, number>();
+  for (const t of chartData) {
+    if (t.is_cc_payment || t.amount <= 0) continue;
+    const key = new Date(t.date).toISOString().slice(0, 10);
+    dayTotals.set(key, (dayTotals.get(key) ?? 0) + t.amount);
+  }
+  const dailySpend: MobileDaySpend[] = [...dayTotals.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-6)
+    .map(([key, amount]) => ({
+      label: new Date(key).toLocaleDateString("en-IN", { day: "2-digit" }),
+      amount,
+    }));
+
+  const moreItems: MobileMoreItem[] = [
+    {
+      href: "/recoverables",
+      label: "Recoverables",
+      sub: "Money owed to you",
+      value: formatINR(outstanding.total),
+    },
+    {
+      href: "/emis",
+      label: "EMIs",
+      sub: "Instalments this month",
+      value: String(countedEmiInstallmentDtos.length),
+    },
+    {
+      href: "/carryover",
+      label: "Carryover",
+      sub: "Roll unspent budget",
+      value: carryoverMonthsOwing > 0 ? `${carryoverMonthsOwing} owing` : "On",
+    },
+    {
+      href: "/tracked",
+      label: "Tracked",
+      sub: "Set aside this month",
+      value: formatINR(trackedTotal),
+    },
+    {
+      href: "/categories",
+      label: "Categories",
+      sub: "Manage & merge",
+      value: String(categories.length),
+    },
+    {
+      href: "/import",
+      label: "Import",
+      sub: "From spreadsheet",
+      value: "XLSX",
+    },
+  ];
+
+  const mobileMonthLabel = new Date(year, month).toLocaleDateString("en-IN", {
+    month: "short",
+    year: "numeric",
+  });
+  const isCurrentMonth =
+    month === now.getMonth() && year === now.getFullYear();
+
+  async function handleSignOut() {
+    "use server";
+    await signOut({ redirectTo: "/login" });
+  }
+
   return (
-    <div className="min-h-screen bg-background">
+    <>
+      <div data-view-mobile className="md:hidden">
+        <MobileDashboard
+          month={month}
+          year={year}
+          monthLabel={mobileMonthLabel}
+          isCurrentMonth={isCurrentMonth}
+          totalSpend={totalSpend}
+          budget={budget?.amount ?? null}
+          totalTransactions={totalTransactions}
+          avgTransaction={avgTransaction}
+          trackedTotal={trackedTotal}
+          outstandingTotal={outstanding.total}
+          outstandingCount={outstanding.counterpartyCount}
+          categorySlices={categorySlices}
+          dailySpend={dailySpend}
+          transactions={mobileTransactions}
+          categories={categories}
+          knownCounterparties={knownCounterparties}
+          moreItems={moreItems}
+          insightCopy={null}
+          onSignOut={handleSignOut}
+        />
+      </div>
+      <div
+        data-view-desktop
+        className="hidden min-h-screen bg-background md:block"
+      >
       <header className="border-b">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-4 py-3 sm:px-6 sm:py-4">
           <div className="flex items-center gap-2 sm:gap-6">
@@ -187,6 +337,7 @@ export default async function Dashboard({
               <h1 className="text-lg font-bold sm:text-xl md:hidden">Expense Tracker</h1>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3">
+            <SwitchToMobileButton />
             <SetBudgetDialog
               month={month}
               year={year}
@@ -359,6 +510,7 @@ export default async function Dashboard({
           </TabsContent>
         </Tabs>
       </main>
-    </div>
+      </div>
+    </>
   );
 }
