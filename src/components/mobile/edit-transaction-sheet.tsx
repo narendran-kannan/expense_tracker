@@ -306,6 +306,7 @@ function EditForm({
     transaction.subcategory ?? null
   );
   const [isCc, setIsCc] = useState(transaction.is_cc_payment);
+  const [remarks, setRemarks] = useState(transaction.remarks ?? "");
   const [isPending, startTransition] = useTransition();
 
   function save() {
@@ -316,6 +317,7 @@ function EditForm({
         category,
         subcategory,
         is_cc_payment: isCc,
+        remarks: remarks.trim() || null,
       });
       onDone();
     });
@@ -354,6 +356,16 @@ function EditForm({
           }))}
         />
       </div>
+      <label className="flex flex-col gap-1.5">
+        <span className={labelCls}>Remarks</span>
+        <textarea
+          value={remarks}
+          onChange={(e) => setRemarks(e.target.value)}
+          rows={2}
+          placeholder="Add a note (optional)"
+          className="min-h-[56px] resize-none rounded-[14px] border border-[var(--m-border)] bg-white px-4 py-3 text-[15px] font-semibold text-[var(--m-ink)] outline-none placeholder:text-[var(--m-text-quaternary)]"
+        />
+      </label>
       <label className="flex cursor-pointer items-center gap-2 text-[13px] font-semibold text-[var(--m-text-secondary)]">
         <input
           type="checkbox"

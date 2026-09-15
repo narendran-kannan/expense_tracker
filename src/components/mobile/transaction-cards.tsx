@@ -38,11 +38,15 @@ export function TransactionCards({
   transactions,
   onEdit,
   onDelete,
+  onApprove,
+  approvingId,
   onClearFilters,
 }: {
   transactions: MobileTransaction[];
   onEdit: (t: MobileTransaction) => void;
   onDelete: (t: MobileTransaction) => void;
+  onApprove: (t: MobileTransaction) => void;
+  approvingId: string | null;
   onClearFilters?: () => void;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -138,6 +142,11 @@ export function TransactionCards({
                           </span>
                         )}
                       </div>
+                      {tx.remarks && (
+                        <span className="truncate text-[12px] font-medium italic text-[var(--m-text-tertiary)]">
+                          “{tx.remarks}”
+                        </span>
+                      )}
                     </div>
                     <span className="m-tnum flex-none text-[15px] font-extrabold text-[var(--m-ink)]">
                       {formatINR(tx.amount)}
@@ -145,33 +154,47 @@ export function TransactionCards({
                   </button>
                   {open && (
                     <div
-                      className="m-anim-fade grid grid-cols-2 gap-2 px-4 pb-3.5"
+                      className="m-anim-fade flex flex-col gap-2 px-4 pb-3.5"
                       style={{ background: "var(--m-surface-sunken)" }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenId(null);
-                          onEdit(tx);
-                        }}
-                        className="h-[46px] cursor-pointer rounded-[13px] border border-[var(--m-border)] bg-white text-[12px] font-bold text-[var(--m-ink)]"
-                      >
-                        Edit & more
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenId(null);
-                          onDelete(tx);
-                        }}
-                        className="h-[46px] cursor-pointer rounded-[13px] bg-white text-[12px] font-bold"
-                        style={{
-                          border: "1px solid var(--m-danger-border)",
-                          color: "var(--m-danger)",
-                        }}
-                      >
-                        Delete
-                      </button>
+                      {tx.needs_review && (
+                        <button
+                          type="button"
+                          disabled={approvingId === tx.id}
+                          onClick={() => onApprove(tx)}
+                          className="h-[46px] cursor-pointer rounded-[13px] border-0 bg-[var(--m-ink)] text-[12px] font-extrabold text-[var(--m-canvas)] disabled:opacity-60"
+                        >
+                          {approvingId === tx.id
+                            ? "Approving…"
+                            : "Looks right — approve"}
+                        </button>
+                      )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenId(null);
+                            onEdit(tx);
+                          }}
+                          className="h-[46px] cursor-pointer rounded-[13px] border border-[var(--m-border)] bg-white text-[12px] font-bold text-[var(--m-ink)]"
+                        >
+                          Edit & more
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenId(null);
+                            onDelete(tx);
+                          }}
+                          className="h-[46px] cursor-pointer rounded-[13px] bg-white text-[12px] font-bold"
+                          style={{
+                            border: "1px solid var(--m-danger-border)",
+                            color: "var(--m-danger)",
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

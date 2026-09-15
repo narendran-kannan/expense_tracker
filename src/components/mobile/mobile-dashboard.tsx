@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { approveTransaction } from "@/app/actions";
 import {
   Home,
   Receipt,
@@ -78,6 +79,16 @@ export function MobileDashboard(props: MobileDashboardProps) {
   const [sheet, setSheet] = useState<"add" | "filter" | null>(null);
   const [editTx, setEditTx] = useState<MobileTransaction | null>(null);
   const [deleteTx, setDeleteTx] = useState<MobileTransaction | null>(null);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [, startApprove] = useTransition();
+
+  function handleApprove(t: MobileTransaction) {
+    setApprovingId(t.id);
+    startApprove(async () => {
+      await approveTransaction(t.id);
+      setApprovingId(null);
+    });
+  }
 
   const pending = useMemo(
     () => props.transactions.filter((t) => t.needs_review),
@@ -150,7 +161,7 @@ export function MobileDashboard(props: MobileDashboardProps) {
   const budgetOver = props.budget ? props.totalSpend > props.budget : false;
 
   return (
-    <div className="mobile-shell relative flex min-h-screen flex-col">
+    <div className="mobile-shell relative flex h-[100dvh] flex-col overflow-hidden">
       {/* Top bar: month stepper + tab title */}
       <div className="flex flex-none items-center justify-between gap-2.5 px-5 pt-3 pb-3">
         <div className="flex items-center gap-0.5 rounded-[12px] bg-[var(--m-fill-strong)] p-[3px]">
@@ -430,6 +441,8 @@ export function MobileDashboard(props: MobileDashboardProps) {
               transactions={filtered}
               onEdit={(t) => setEditTx(t)}
               onDelete={(t) => setDeleteTx(t)}
+              onApprove={handleApprove}
+              approvingId={approvingId}
               onClearFilters={() => setFilters(EMPTY_FILTERS)}
             />
           </div>
