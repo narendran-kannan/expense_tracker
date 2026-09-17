@@ -99,6 +99,7 @@ export function MonthlyTrendChart({
   year: number;
 }) {
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [pinned, setPinned] = useState<Set<string>>(new Set());
 
   const spending = transactions.filter((t) => !t.is_cc_payment);
 
@@ -134,6 +135,20 @@ export function MonthlyTrendChart({
       return next;
     });
   }
+
+  function togglePin(month: string) {
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(month)) {
+        next.delete(month);
+      } else {
+        next.add(month);
+      }
+      return next;
+    });
+  }
+
+  const hasPins = pinned.size > 0;
 
   return (
     <Card className="col-span-full">
@@ -185,35 +200,136 @@ export function MonthlyTrendChart({
             }
           />
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-              <XAxis dataKey="month" fontSize={12} tickLine={false} />
-              <YAxis
-                fontSize={12}
-                tickLine={false}
-                tickFormatter={formatCompact}
-              />
-              <Tooltip
-                formatter={(value) => [formatINR(Number(value)), "Spent"]}
-                contentStyle={{
-                  borderRadius: "8px",
-                  border: "1px solid hsl(var(--border))",
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey="amount"
-                stroke="hsl(221, 83%, 53%)"
-                strokeWidth={2}
-                dot={{ r: 4, fill: "hsl(221, 83%, 53%)" }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <>
+            {hasPins && (
+              <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-muted-foreground mr-1">
+                  Pinned:
+                </span>
+                {data
+                  .filter((d) => pinned.has(d.month))
+                  .map((d) => (
+                    <button
+                      key={d.month}
+                      type="button"
+                      onClick={() => togglePin(d.month)}
+                      className="rounded-full border border-transparent bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+                      title="Click to unpin"
+                    >
+                      {d.month}: {formatINR(d.amount)}
+                      <span className="ml-1 text-muted-foreground">×</span>
+                    </button>
+                  ))}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => setPinned(new Set())}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={data} margin={{ top: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <XAxis dataKey="month" fontSize={12} tickLine={false} />
+                <YAxis
+                  fontSize={12}
+                  tickLine={false}
+                  tickFormatter={formatCompact}
+                />
+                <Tooltip
+                  formatter={(value) => [formatINR(Number(value)), "Spent"]}
+                  contentStyle={{
+                    borderRadius: "8px",
+                    border: "1px solid hsl(var(--border))",
+                  }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="amount"
+                  stroke="hsl(221, 83%, 53%)"
+                  strokeWidth={2}
+                  dot={(props: PinnableDotProps) => (
+                    <PinnableDot
+                      {...props}
+                      pinned={pinned}
+                      onToggle={togglePin}
+                    />
+                  )}
+                  activeDot={{
+                    r: 6,
+                    onClick: (_e: unknown, payload: { payload?: TrendDatum }) => {
+                      if (payload?.payload) togglePin(payload.payload.month);
+                    },
+                    style: { cursor: "pointer" },
+                  }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+interface TrendDatum {
+  month: string;
+  amount: number;
+}
+
+interface PinnableDotProps {
+  cx?: number;
+  cy?: number;
+  payload?: TrendDatum;
+}
+
+function PinnableDot({
+  cx,
+  cy,
+  payload,
+  pinned,
+  onToggle,
+}: PinnableDotProps & {
+  pinned: Set<string>;
+  onToggle: (month: string) => void;
+}) {
+  if (cx == null || cy == null || !payload) return null;
+  const isPinned = pinned.has(payload.month);
+  return (
+    <g style={{ cursor: "pointer" }} onClick={() => onToggle(payload.month)}>
+      {isPinned && (
+        <>
+          <circle
+            cx={cx}
+            cy={cy}
+            r={7}
+            fill="hsl(221, 83%, 53%)"
+            fillOpacity={0.2}
+          />
+          <text
+            x={cx}
+            y={cy - 12}
+            textAnchor="middle"
+            fontSize={11}
+            fontWeight={600}
+            fill="hsl(221, 83%, 53%)"
+          >
+            {formatINR(payload.amount)}
+          </text>
+        </>
+      )}
+      <circle
+        cx={cx}
+        cy={cy}
+        r={isPinned ? 5 : 4}
+        fill="hsl(221, 83%, 53%)"
+        stroke="white"
+        strokeWidth={isPinned ? 2 : 0}
+      />
+    </g>
   );
 }
 
