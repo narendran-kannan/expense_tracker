@@ -148,9 +148,21 @@ export function TransactionCards({
                         </span>
                       )}
                     </div>
-                    <span className="m-tnum flex-none text-[15px] font-extrabold text-[var(--m-ink)]">
-                      {formatINR(tx.amount)}
-                    </span>
+                    {tx.recoverable_amount != null &&
+                    tx.amount - tx.effectiveAmount > 0 ? (
+                      <div className="flex flex-none flex-col items-end gap-0.5">
+                        <span className="m-tnum text-[15px] font-extrabold text-[var(--m-ink)]">
+                          {formatINR(tx.effectiveAmount)}
+                        </span>
+                        <span className="m-tnum text-[11px] font-bold text-[var(--m-text-tertiary)]">
+                          {formatINR(tx.amount - tx.effectiveAmount)} back
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="m-tnum flex-none text-[15px] font-extrabold text-[var(--m-ink)]">
+                        {formatINR(tx.amount)}
+                      </span>
+                    )}
                   </button>
                   {open && (
                     <div

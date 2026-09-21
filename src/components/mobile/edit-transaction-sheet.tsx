@@ -301,6 +301,7 @@ function EditForm({
 }) {
   const [merchant, setMerchant] = useState(transaction.merchant);
   const [amount, setAmount] = useState(String(transaction.amount));
+  const [date, setDate] = useState(toDateInputValue(transaction.date));
   const [category, setCategory] = useState(transaction.category);
   const [subcategory, setSubcategory] = useState<string | null>(
     transaction.subcategory ?? null
@@ -314,6 +315,7 @@ function EditForm({
       await updateTransaction(transaction.id, {
         merchant,
         amount: Number(amount) || transaction.amount,
+        date: new Date(date).toISOString(),
         category,
         subcategory,
         is_cc_payment: isCc,
@@ -341,6 +343,15 @@ function EditForm({
           inputMode="decimal"
           onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
           className={`m-tnum ${inputCls}`}
+        />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className={labelCls}>Date</span>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className={inputCls}
         />
       </label>
       <div className="flex flex-col gap-1.5">

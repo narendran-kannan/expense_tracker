@@ -12,6 +12,9 @@ export interface MobileTransaction {
   remarks: string | null;
   is_emi?: boolean | null;
   recoverable_amount?: number | null;
+  recovery_status?: string | null;
+  counterparty?: string | null;
+  repayments?: { amount: number }[];
   isEmiInstallment?: boolean;
 }
 

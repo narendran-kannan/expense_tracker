@@ -661,18 +661,34 @@ function TransactionRow({
           </div>
         ) : (
           <>
-            {formatINR(t.amount)}
+            {isRecoverable && t.amount - txEffectiveSpend(t) > 0 ? (
+              <span className="text-muted-foreground line-through">
+                {formatINR(t.amount)}
+              </span>
+            ) : (
+              formatINR(t.amount)
+            )}
             {t.is_cc_payment && (
               <Badge variant="secondary" className="ml-2 text-xs">
                 CC Payment
               </Badge>
             )}
-            {isRecoverable && status !== RECOVERY_STATUS.RECOVERED && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                Effective:{" "}
-                <span className="font-medium text-foreground">
-                  {formatINR(txEffectiveSpend(t))}
-                </span>
+            {isRecoverable && (
+              <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                <div>
+                  On you:{" "}
+                  <span className="font-medium text-foreground">
+                    {formatINR(txEffectiveSpend(t))}
+                  </span>
+                </div>
+                {t.amount - txEffectiveSpend(t) > 0 && (
+                  <div>
+                    Recovered:{" "}
+                    <span className="font-medium text-foreground">
+                      {formatINR(t.amount - txEffectiveSpend(t))}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
             {isEmiTxn && (

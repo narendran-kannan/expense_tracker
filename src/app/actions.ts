@@ -713,6 +713,7 @@ export async function updateTransaction(
     subcategory?: string | null;
     merchant?: string;
     amount?: number;
+    date?: string;
     is_cc_payment?: boolean;
     remarks?: string | null;
   }
@@ -720,6 +721,7 @@ export async function updateTransaction(
   const updateData: Record<string, unknown> = {};
   if (data.merchant !== undefined) updateData.merchant = data.merchant;
   if (data.amount !== undefined) updateData.amount = data.amount;
+  if (data.date !== undefined) updateData.date = new Date(data.date);
   if (data.is_cc_payment !== undefined)
     updateData.is_cc_payment = data.is_cc_payment;
   if (data.remarks !== undefined) updateData.remarks = data.remarks;

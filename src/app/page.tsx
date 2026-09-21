@@ -202,6 +202,9 @@ export default async function Dashboard({
       remarks: t.remarks,
       is_emi: t.is_emi,
       recoverable_amount: t.recoverable_amount,
+      recovery_status: t.recovery_status,
+      counterparty: t.counterparty,
+      repayments: t.repayments.map((r) => ({ amount: r.amount })),
     })),
     ...countedEmiInstallmentDtos.map((i) => ({
       id: i.id,
