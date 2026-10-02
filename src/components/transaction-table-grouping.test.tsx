@@ -79,9 +79,12 @@ describe("TransactionTable selection mode", () => {
 
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Group expenses/ }));
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
 
-    expect(screen.getAllByRole("checkbox")).toHaveLength(ungrouped.length);
+    expect(
+      screen.getByRole("checkbox", { name: /Select all visible/ })
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(ungrouped.length + 1);
   });
 
   it("calls groupTransactions with the selected ids", async () => {
@@ -91,7 +94,7 @@ describe("TransactionTable selection mode", () => {
       <TransactionTable transactions={ungrouped} categories={categories} />
     );
 
-    await user.click(screen.getByRole("button", { name: /Group expenses/ }));
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
     await user.click(
       screen.getByRole("checkbox", {
         name: /Car Service - Labour/,
@@ -120,7 +123,7 @@ describe("TransactionTable selection mode", () => {
       <TransactionTable transactions={ungrouped} categories={categories} />
     );
 
-    await user.click(screen.getByRole("button", { name: /Group expenses/ }));
+    await user.click(screen.getByRole("button", { name: /^Select$/ }));
     expect(screen.getByRole("button", { name: /^Group/ })).toBeDisabled();
 
     await user.click(

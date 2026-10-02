@@ -833,6 +833,71 @@ export async function ungroupAll(groupId: string) {
   await revalidateAppPaths();
 }
 
+function requireBulkIds(ids: string[]): string[] {
+  const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    throw new Error("Select at least one transaction");
+  }
+  return uniqueIds;
+}
+
+export async function bulkUpdateTransactionCategory(
+  ids: string[],
+  data: { category: string; subcategory?: string | null }
+): Promise<number> {
+  const uniqueIds = requireBulkIds(ids);
+  const category = data.category.trim();
+  if (!category) throw new Error("Category is required");
+
+  const { categoryId, subcategoryId } = await resolveCategoryIds(
+    category,
+    data.subcategory ?? null
+  );
+
+  const { count } = await prisma.transaction.updateMany({
+    where: { id: { in: uniqueIds } },
+    data: { category, categoryId, subcategoryId },
+  });
+
+  await revalidateAppPaths();
+  return count;
+}
+
+export async function bulkApproveTransactions(ids: string[]): Promise<number> {
+  const uniqueIds = requireBulkIds(ids);
+
+  const { count } = await prisma.transaction.updateMany({
+    where: { id: { in: uniqueIds }, needs_review: true },
+    data: { needs_review: false },
+  });
+
+  await revalidateAppPaths();
+  return count;
+}
+
+export async function bulkDeleteTransactions(ids: string[]): Promise<number> {
+  const uniqueIds = requireBulkIds(ids);
+
+  const txns = await prisma.transaction.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { group_id: true },
+  });
+
+  const { count } = await prisma.transaction.deleteMany({
+    where: { id: { in: uniqueIds } },
+  });
+
+  const groupIds = new Set(
+    txns.map((t) => t.group_id).filter((g): g is string => Boolean(g))
+  );
+  for (const groupId of groupIds) {
+    await cleanupGroup(groupId);
+  }
+
+  await revalidateAppPaths();
+  return count;
+}
+
 export async function getSkippedEmails() {
   return prisma.skippedEmail.findMany({
     where: { dismissed: false },

@@ -10,6 +10,9 @@ import {
   cloneTransaction,
   groupTransactions,
   ungroupAll,
+  bulkApproveTransactions,
+  bulkDeleteTransactions,
+  bulkUpdateTransactionCategory,
 } from "@/app/actions";
 import { effectiveSpend, RECOVERY_STATUS } from "@/lib/recoverable";
 import { defaultMonthlyAmount } from "@/lib/emi";
@@ -49,12 +52,15 @@ import { CategorySelect } from "@/components/category-select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarClock,
+  Check,
   ChevronDown,
   ChevronRight,
   Copy,
   HandCoins,
   Layers,
+  ListChecks,
   Pencil,
+  Tag,
   Trash2,
   Ungroup,
   X,
@@ -128,6 +134,15 @@ function toDateInputValue(date: string | Date) {
   return new Date(d.getTime() - offset * 60000).toISOString().slice(0, 10);
 }
 
+function selectionState(
+  ids: string[],
+  selected: Set<string>
+): boolean | "indeterminate" {
+  const count = ids.filter((id) => selected.has(id)).length;
+  if (count === 0) return false;
+  return count === ids.length ? true : "indeterminate";
+}
+
 export function TransactionTable({
   transactions,
   categories,
@@ -147,7 +162,10 @@ export function TransactionTable({
   const [maxAmount, setMaxAmount] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [isGrouping, startGrouping] = useTransition();
+  const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
+  const [bulkCategory, setBulkCategory] = useState("");
+  const [bulkSubcategory, setBulkSubcategory] = useState<string | null>(null);
+  const [isBulkPending, startBulk] = useTransition();
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -158,17 +176,20 @@ export function TransactionTable({
     });
   }
 
+  function setManySelected(ids: string[], checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+
   function exitSelectionMode() {
     setSelectionMode(false);
     setSelected(new Set());
-  }
-
-  function handleGroupSelected() {
-    if (selected.size < 2) return;
-    startGrouping(async () => {
-      await groupTransactions(Array.from(selected));
-      exitSelectionMode();
-    });
   }
 
   const availableSubcategories = useMemo(() => {
@@ -216,6 +237,64 @@ export function TransactionTable({
     minAmount,
     maxAmount,
   ]);
+
+  const filteredIds = useMemo(() => filtered.map((t) => t.id), [filtered]);
+
+  const selectedTransactions = useMemo(
+    () => filtered.filter((t) => selected.has(t.id)),
+    [filtered, selected]
+  );
+  const selectedIds = selectedTransactions.map((t) => t.id);
+  const selectedReviewIds = selectedTransactions
+    .filter((t) => t.needs_review)
+    .map((t) => t.id);
+  const selectedAmount = selectedTransactions.reduce(
+    (sum, t) => sum + t.amount,
+    0
+  );
+  const allVisibleState = selectionState(filteredIds, selected);
+
+  function runBulk(action: () => Promise<unknown>) {
+    startBulk(async () => {
+      await action();
+      setSelected(new Set());
+    });
+  }
+
+  function handleGroupSelected() {
+    if (selectedIds.length < 2) return;
+    startBulk(async () => {
+      await groupTransactions(selectedIds);
+      exitSelectionMode();
+    });
+  }
+
+  function handleBulkApprove() {
+    if (selectedReviewIds.length === 0) return;
+    runBulk(() => bulkApproveTransactions(selectedReviewIds));
+  }
+
+  function handleBulkDelete() {
+    if (selectedIds.length === 0) return;
+    runBulk(() => bulkDeleteTransactions(selectedIds));
+  }
+
+  function openBulkCategory() {
+    setBulkCategory("");
+    setBulkSubcategory(null);
+    setBulkCategoryOpen(true);
+  }
+
+  function handleBulkCategory() {
+    if (selectedIds.length === 0 || !bulkCategory) return;
+    runBulk(async () => {
+      await bulkUpdateTransactionCategory(selectedIds, {
+        category: bulkCategory,
+        subcategory: bulkSubcategory,
+      });
+      setBulkCategoryOpen(false);
+    });
+  }
 
   const emiInstallmentTotal = useMemo(
     () => emiInstallments.reduce((sum, i) => sum + i.amount, 0),
@@ -375,7 +454,7 @@ export function TransactionTable({
               className="h-9 w-28"
               aria-label="Maximum amount"
             />
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
               {hasActiveFilters && (
                 <Button
                   variant="ghost"
@@ -389,15 +468,80 @@ export function TransactionTable({
               )}
               {selectionMode ? (
                 <>
+                  <span
+                    className="text-sm text-muted-foreground"
+                    aria-live="polite"
+                  >
+                    {selectedIds.length} selected
+                  </span>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkApprove}
+                    disabled={selectedReviewIds.length === 0 || isBulkPending}
+                    className="h-9"
+                  >
+                    <Check className="mr-1 h-4 w-4" />
+                    Approve
+                    {selectedReviewIds.length > 0
+                      ? ` (${selectedReviewIds.length})`
+                      : ""}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={openBulkCategory}
+                    disabled={selectedIds.length === 0 || isBulkPending}
+                    className="h-9"
+                  >
+                    <Tag className="mr-1 h-4 w-4" />
+                    Set category
+                  </Button>
+                  <Button
+                    variant="outline"
                     size="sm"
                     onClick={handleGroupSelected}
-                    disabled={selected.size < 2 || isGrouping}
+                    disabled={selectedIds.length < 2 || isBulkPending}
                     className="h-9"
                   >
                     <Layers className="mr-1 h-4 w-4" />
-                    Group {selected.size > 0 ? `(${selected.size})` : ""}
+                    Group {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}
                   </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={selectedIds.length === 0 || isBulkPending}
+                        className="h-9 text-destructive"
+                      >
+                        <Trash2 className="mr-1 h-4 w-4" />
+                        Delete
+                        {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Delete {selectedIds.length} transaction
+                          {selectedIds.length === 1 ? "" : "s"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will permanently delete {selectedIds.length}{" "}
+                          transaction{selectedIds.length === 1 ? "" : "s"}{" "}
+                          totalling {formatINR(selectedAmount)}, including any
+                          repayments recorded against them. This action cannot
+                          be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleBulkDelete}>
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -414,8 +558,8 @@ export function TransactionTable({
                   onClick={() => setSelectionMode(true)}
                   className="h-9"
                 >
-                  <Layers className="mr-1 h-4 w-4" />
-                  Group expenses
+                  <ListChecks className="mr-1 h-4 w-4" />
+                  Select
                 </Button>
               )}
             </div>
@@ -467,7 +611,18 @@ export function TransactionTable({
           <Table>
             <TableHeader>
               <TableRow>
-                {selectionMode && <TableHead className="w-8" />}
+                {selectionMode && (
+                  <TableHead className="w-8">
+                    <Checkbox
+                      checked={allVisibleState}
+                      onCheckedChange={() =>
+                        setManySelected(filteredIds, allVisibleState !== true)
+                      }
+                      disabled={filteredIds.length === 0}
+                      aria-label="Select all visible transactions"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Date</TableHead>
                 <TableHead>Merchant</TableHead>
                 <TableHead>Amount</TableHead>
@@ -489,6 +644,7 @@ export function TransactionTable({
                     selectionMode={selectionMode}
                     selected={selected}
                     onToggleSelected={toggleSelected}
+                    onSetManySelected={setManySelected}
                   />
                 ) : (
                   <TransactionRow
@@ -512,6 +668,48 @@ export function TransactionTable({
             </TableBody>
           </Table>
         )}
+        <Dialog open={bulkCategoryOpen} onOpenChange={setBulkCategoryOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                Set category for {selectedIds.length} transaction
+                {selectedIds.length === 1 ? "" : "s"}
+              </DialogTitle>
+              <DialogDescription>
+                Every selected transaction will be moved to this category.
+                Moving into or out of a tracked category also moves them
+                between the Dashboard and Tracked pages.
+              </DialogDescription>
+            </DialogHeader>
+            <CategorySelect
+              value={bulkCategory}
+              onChange={setBulkCategory}
+              subcategory={bulkSubcategory}
+              onSubcategoryChange={setBulkSubcategory}
+              categories={categories.map((c) => ({
+                name: c.name,
+                subcategories: c.subcategories.map((s) => s.name),
+              }))}
+              className="h-9 w-full"
+            />
+            <DialogFooter>
+              <Button
+                variant="ghost"
+                onClick={() => setBulkCategoryOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleBulkCategory}
+                disabled={
+                  isBulkPending || !bulkCategory || selectedIds.length === 0
+                }
+              >
+                Apply
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
@@ -612,14 +810,12 @@ function TransactionRow({
   return (
     <TableRow className={t.is_cc_payment ? "opacity-50" : ""}>
       {selectionMode && (
-        <TableCell className="w-8">
-          {!nested && (
-            <Checkbox
-              checked={selected}
-              onCheckedChange={() => onToggleSelected?.(t.id)}
-              aria-label={`Select transaction to ${t.merchant}`}
-            />
-          )}
+        <TableCell className={nested ? "w-8 pl-4" : "w-8"}>
+          <Checkbox
+            checked={selected}
+            onCheckedChange={() => onToggleSelected?.(t.id)}
+            aria-label={`Select transaction to ${t.merchant}`}
+          />
         </TableCell>
       )}
       <TableCell className={nested ? "pl-8 text-muted-foreground" : ""}>
@@ -1125,6 +1321,7 @@ function GroupRow({
   selectionMode,
   selected,
   onToggleSelected,
+  onSetManySelected,
 }: {
   groupId: string;
   members: Transaction[];
@@ -1133,9 +1330,12 @@ function GroupRow({
   selectionMode: boolean;
   selected: Set<string>;
   onToggleSelected: (id: string) => void;
+  onSetManySelected: (ids: string[], checked: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const memberIds = members.map((m) => m.id);
+  const groupSelection = selectionState(memberIds, selected);
 
   const groupTotal = members
     .filter((m) => !m.is_cc_payment)
@@ -1158,7 +1358,17 @@ function GroupRow({
   return (
     <>
       <TableRow className="bg-muted/40">
-        {selectionMode && <TableCell className="w-8" />}
+        {selectionMode && (
+          <TableCell className="w-8">
+            <Checkbox
+              checked={groupSelection}
+              onCheckedChange={() =>
+                onSetManySelected(memberIds, groupSelection !== true)
+              }
+              aria-label={`Select all ${members.length} grouped payments`}
+            />
+          </TableCell>
+        )}
         <TableCell>
           <button
             type="button"
