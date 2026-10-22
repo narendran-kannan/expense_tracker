@@ -49,3 +49,6 @@ next-env.d.ts
 
 # playwright mcp artifacts
 .playwright-mcp
+
+# AI benchmark raw outputs (regenerate with scripts/ai-bench/run.mjs)
+/scripts/ai-bench/results/

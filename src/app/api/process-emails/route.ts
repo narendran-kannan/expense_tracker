@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google as googleapis } from "googleapis";
-import { google } from "@ai-sdk/google";
 import { generateObject } from "ai";
+import { extractionModel } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
 import { buildCategoryPromptText, DEFAULT_CATEGORIES } from "@/lib/categories";
 import { emailBodySnippet, buildEmailText } from "@/lib/email";
@@ -311,7 +311,7 @@ export async function GET(request: NextRequest) {
         const emailText = buildEmailText(from, subject, body);
 
         const { object: transaction } = await generateObject({
-          model: google("gemini-2.5-flash"),
+          model: extractionModel(),
           schema: transactionSchema,
           prompt: buildAIPrompt(categoryPromptText) + emailText,
         });

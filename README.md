@@ -72,7 +72,7 @@ Edit `.env` with your values. See [`.env.example`](.env.example) for detailed de
 | `DATABASE_URL` | PostgreSQL connection string |
 | `AUTH_SECRET` | Random secret for NextAuth (`openssl rand -base64 32`) |
 | `AUTH_PASSWORD` | Your dashboard login password |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini API key from [AI Studio](https://aistudio.google.com/app/apikey) |
+| `OPENROUTER_API_KEY` | OpenRouter API key from [openrouter.ai/keys](https://openrouter.ai/keys) |
 | `GMAIL_CLIENT_ID` | Gmail OAuth 2.0 client ID |
 | `GMAIL_CLIENT_SECRET` | Gmail OAuth 2.0 client secret |
 | `GMAIL_REFRESH_TOKEN` | Gmail refresh token (use [OAuth Playground](https://developers.google.com/oauthplayground)) |

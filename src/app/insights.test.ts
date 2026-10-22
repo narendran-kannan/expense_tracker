@@ -7,7 +7,8 @@ const {
   insightUpsert,
   generateObjectMock,
   revalidatePathMock,
-  googleMock,
+  extractionModelMock,
+  insightsModelMock,
 } = vi.hoisted(() => ({
   transactionFindMany: vi.fn(),
   categoryFindMany: vi.fn().mockResolvedValue([]),
@@ -15,7 +16,8 @@ const {
   insightUpsert: vi.fn(),
   generateObjectMock: vi.fn(),
   revalidatePathMock: vi.fn(),
-  googleMock: vi.fn(() => "gemini-2.5-pro"),
+  extractionModelMock: vi.fn(() => "extraction-model"),
+  insightsModelMock: vi.fn(() => "google/gemini-3.5-flash-lite"),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -26,8 +28,9 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@ai-sdk/google", () => ({
-  google: googleMock,
+vi.mock("@/lib/ai", () => ({
+  extractionModel: extractionModelMock,
+  insightsModel: insightsModelMock,
 }));
 
 vi.mock("ai", () => ({
@@ -76,7 +79,7 @@ beforeEach(() => {
     trends: (create ?? update).trends,
     anomalies: (create ?? update).anomalies,
     suggestions: (create ?? update).suggestions,
-    model: "gemini-2.5-pro",
+    model: "google/gemini-3.5-flash-lite",
     updated_at: new Date("2026-04-30T10:00:00Z"),
     tx_count_at_generation: (create ?? update).tx_count_at_generation,
     tx_latest_at_generation: (create ?? update).tx_latest_at_generation,
@@ -142,7 +145,7 @@ describe("getInsights — fresh generation", () => {
     expect(call.create.period_key).toBe("2026-04");
     expect(call.create.month).toBe(3);
     expect(call.create.year).toBe(2026);
-    expect(call.create.model).toBe("gemini-2.5-pro");
+    expect(call.create.model).toBe("google/gemini-3.5-flash-lite");
   });
 
   it("upserts with null month and year-only key for a year period", async () => {
@@ -188,7 +191,7 @@ describe("getInsights — cache", () => {
     trends: ["cached trend"],
     anomalies: [],
     suggestions: [],
-    model: "gemini-2.5-pro",
+    model: "google/gemini-3.5-flash-lite",
     tx_count_at_generation: 7,
     tx_latest_at_generation: latest,
     updated_at: new Date("2026-04-28T12:00:00Z"),
@@ -270,7 +273,7 @@ describe("getCachedInsight", () => {
       trends: ["t1"],
       anomalies: [],
       suggestions: ["s1"],
-      model: "gemini-2.5-pro",
+      model: "google/gemini-3.5-flash-lite",
       tx_count_at_generation: 5,
       tx_latest_at_generation: new Date(),
       updated_at: new Date("2026-04-28T12:00:00Z"),
@@ -366,13 +369,13 @@ describe("getInsights — prompt construction", () => {
     expect(call.prompt).toMatch(/suggestions: 3 items max/);
   });
 
-  it("uses gemini-2.5-pro model", async () => {
+  it("uses the configured insights model", async () => {
     transactionFindMany.mockResolvedValueOnce(makeTransactions(10));
     transactionFindMany.mockResolvedValueOnce([]);
     insightFindUnique.mockResolvedValueOnce(null);
 
     await getInsights(monthPeriod);
 
-    expect(googleMock).toHaveBeenCalledWith("gemini-2.5-pro");
+    expect(insightsModelMock).toHaveBeenCalled();
   });
 });

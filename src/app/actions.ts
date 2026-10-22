@@ -1041,7 +1041,7 @@ export async function getAllBudgets() {
 }
 
 export async function parseExpenseText(text: string) {
-  const { google } = await import("@ai-sdk/google");
+  const { extractionModel } = await import("@/lib/ai");
   const { generateObject } = await import("ai");
   const { batchTransactionSchema } = await import("@/lib/schemas");
   const { buildCategoryPromptText } = await import("@/lib/categories");
@@ -1084,7 +1084,7 @@ User text:
 ${text}`;
 
   const { object: result } = await generateObject({
-    model: google("gemini-2.5-flash"),
+    model: extractionModel(),
     schema: batchTransactionSchema,
     prompt,
   });
@@ -1109,7 +1109,7 @@ export async function parseImportSheet(
   detectedMonth?: number,
   detectedYear?: number
 ) {
-  const { google } = await import("@ai-sdk/google");
+  const { extractionModel } = await import("@/lib/ai");
   const { generateObject } = await import("ai");
   const { batchTransactionSchema } = await import("@/lib/schemas");
   const { buildCategoryPromptText } = await import("@/lib/categories");
@@ -1165,7 +1165,7 @@ Available categories and subcategories:
 ${categoryPromptText}`;
 
   const { object: result } = await generateObject({
-    model: google("gemini-2.5-flash"),
+    model: extractionModel(),
     schema: batchTransactionSchema,
     prompt,
   });
@@ -1315,7 +1315,7 @@ export async function getInsights(
     };
   }
 
-  const { google } = await import("@ai-sdk/google");
+  const { insightsModel } = await import("@/lib/ai");
   const { generateObject } = await import("ai");
   const { insightOutputSchema, clampInsightOutput, INSIGHT_LIMITS } =
     await import("@/lib/schemas");
@@ -1345,7 +1345,7 @@ Stats:
 ${JSON.stringify(stats, null, 2)}`;
 
   const { object: raw } = await generateObject({
-    model: google(INSIGHTS_MODEL),
+    model: insightsModel(),
     schema: insightOutputSchema,
     prompt,
   });

@@ -7,7 +7,7 @@ Single-user Next.js 16 dashboard that parses Indian bank alert emails (Gmail API
 - Next.js 16 (App Router), React 19, TypeScript strict
 - Prisma 7 (PostgreSQL) — client generated to `src/generated/prisma/`, import via `@/lib/prisma`
 - NextAuth v5 beta (credentials provider, single password)
-- Vercel AI SDK + `@ai-sdk/google` (`gemini-2.5-flash`) with Zod schemas for structured output
+- Vercel AI SDK + `@openrouter/ai-sdk-provider` (`ai` v6 → provider v2.x) with Zod schemas for structured output
 - Tailwind CSS 4 + shadcn/ui (new-york style) — do NOT hand-edit `src/components/ui/*`
 - Dev/prod port is **3003**, not 3000 (README still says 3000 — config is the source of truth)
 - Node 24 (`.nvmrc`)
@@ -55,6 +55,8 @@ src/
     ui/                   # shadcn primitives — generated, do not edit
   lib/
     prisma.ts             # singleton; auto-switches between PrismaPg adapter and Accelerate
+    ai.ts                 # OpenRouter provider + model factory (server-only)
+    ai-config.ts          # model ids per task (client-safe, env-overridable)
     auth.ts               # NextAuth credentials config
     schemas.ts            # Zod schemas — fields use .describe() for AI structured output
     categories.ts         # DEFAULT_CATEGORIES (source for db:sync-categories)
@@ -93,7 +95,14 @@ Vitest 4, happy-dom, setup at `src/test-setup.ts` (loads `@testing-library/jest-
 
 Required: `DATABASE_URL`, `AUTH_SECRET`, `AUTH_PASSWORD`.
 Email: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, optional `GMAIL_SEARCH_QUERY`.
-AI: `GOOGLE_GENERATIVE_AI_API_KEY`.
+AI: `OPENROUTER_API_KEY` (required). Optional model overrides: `OPENROUTER_MODEL_EXTRACTION`
+(default `deepseek/deepseek-v4.1-flash-1017`) and `OPENROUTER_MODEL_INSIGHTS`
+(default `google/gemini-3.5-flash-lite`). See `src/lib/ai-config.ts`.
+Privacy: `OPENROUTER_ZDR` / `OPENROUTER_ZDR_INSIGHTS` (default true) send
+`provider.zdr` + `provider.data_collection: "deny"` on every call, so prompts only
+reach Zero-Data-Retention endpoints. A model without a ZDR endpoint fails loudly
+("No endpoints found matching your data policy"). Check with
+`curl https://openrouter.ai/api/v1/endpoints/zdr | jq '.data[].model_id' | sort -u`.
 Cron: `CRON_SECRET` (required to call `/api/process-emails` in prod; bypassed in dev).
 `DATABASE_URL` starting with `prisma+` triggers Accelerate path in `src/lib/prisma.ts`; otherwise PgAdapter is used and the `schema` query param is honored.
 

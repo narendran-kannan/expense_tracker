@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { parseExpenseText } from "./actions";
 
-vi.mock("@ai-sdk/google", () => ({
-  google: vi.fn(() => "gemini-2.5-flash"),
+vi.mock("@/lib/ai", () => ({
+  extractionModel: vi.fn(() => "extraction-model"),
+  insightsModel: vi.fn(() => "insights-model"),
 }));
 
 vi.mock("ai", () => ({

@@ -34,7 +34,7 @@ const cachedResult: InsightResult = {
       { merchant: "Apollo", amount: 4820, reason: "3.1σ above category mean" },
     ],
     suggestions: ["Swiggy appears 4 times"],
-    model: "gemini-2.5-pro",
+    model: "google/gemini-3.5-flash-lite",
     generatedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   },
 };
@@ -139,7 +139,7 @@ describe("InsightsCard — cached initial state", () => {
     expect(
       screen.getByRole("button", { name: /regenerate/i })
     ).toBeInTheDocument();
-    expect(screen.getByText(/gemini-2.5-pro/)).toBeInTheDocument();
+    expect(screen.getByText(/google\/gemini-3.5-flash-lite/)).toBeInTheDocument();
   });
 
   it("displays cache provenance metadata", () => {
