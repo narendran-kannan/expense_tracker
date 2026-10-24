@@ -72,11 +72,11 @@ const MODELS = process.env.BENCH_MODELS
   : ALL_MODELS;
 
 function productionPromptBuilder() {
-  const src = readFileSync(path.join(ROOT, "src/app/api/process-emails/route.ts"), "utf8");
-  const m = src.match(/^function buildAIPrompt\(categoryPromptText: string\): string \{[\s\S]*?\n\}\n/m);
-  if (!m) throw new Error("could not extract buildAIPrompt from route.ts");
+  const src = readFileSync(path.join(ROOT, "src/lib/pipeline.ts"), "utf8");
+  const m = src.match(/^export function buildAIPrompt\(categoryPromptText: string\): string \{[\s\S]*?\n\}\n/m);
+  if (!m) throw new Error("could not extract buildAIPrompt from src/lib/pipeline.ts");
   return new Function(
-    m[0].replace("function buildAIPrompt(categoryPromptText: string): string", "return function (categoryPromptText) ")
+    m[0].replace("export function buildAIPrompt(categoryPromptText: string): string", "return function (categoryPromptText) ")
   )();
 }
 

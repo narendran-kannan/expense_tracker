@@ -45,11 +45,13 @@ src/
     actions.ts            # "use server" — all DB writes; revalidates /, /analytics, /categories
     analytics/page.tsx
     categories/           # category management page
+    debug/                # email pipeline debugger — drives chunked runs and polls
     import/               # XLSX import flow (uses xlsx lib)
     login/page.tsx
     api/
       auth/[...nextauth]/
-      process-emails/     # GET — Gmail → Gemini → DB. Bearer CRON_SECRET in prod
+      process-emails/     # GET — Gmail → AI → DB in one shot (cron). Bearer CRON_SECRET in prod
+      debug/runs/         # POST create run, GET resume; [id]/step polls work, [id]/cancel stops
       seed/               # POST — disabled when NODE_ENV=production
   components/             # client components, co-located *.test.tsx
     ui/                   # shadcn primitives — generated, do not edit
@@ -61,6 +63,9 @@ src/
     schemas.ts            # Zod schemas — fields use .describe() for AI structured output
     categories.ts         # DEFAULT_CATEGORIES (source for db:sync-categories)
     email.ts              # html-to-text helpers
+    pipeline.ts           # per-email Gmail → AI → DB unit (prompt lives here)
+    pipeline-run.ts       # DB-backed chunked runs: create/claim/step/cancel
+    session-cookie.ts     # cheap session check for API routes
     date-extraction.ts    # regex + AI date reconciliation
   middleware.ts           # auth guard — allows /login, /api/auth, /api/process-emails, /api/seed
   generated/prisma/       # gitignored Prisma client output
@@ -86,6 +91,7 @@ scripts/
 - EMI purchases (`is_emi`): the original lump-sum row is the source of truth; cost is spread across `emi_tenure_months` on read, never as stored installment rows. `effectiveSpend()` returns the start-month installment for an EMI row; later months come from `expandTransactionsForRange()` (analytics/insights) or `getEmiInstallmentsForMonth()` (dashboard). EMI installments are NOT `is_cc_payment` — the CC bill exclusion still applies to the bill payment, so each rupee counts once. EMI and recoverable are mutually exclusive. See `src/lib/emi.ts`.
 - Transactions with `confidence_score < 0.8` get `needs_review: true` (auto-flagged).
 - Dedup: by `email_message_id` (unique constraint) + `idx_dedup` on `(amount, merchant, date)`.
+- The `/debug` page never runs the pipeline in one request. `POST /api/debug/runs` only reserves the Gmail message ids; the client then loops `POST /api/debug/runs/[id]/step`, and each step processes emails until its wall-clock budget (`DEBUG_STEP_BUDGET_MS`, default 40s) runs out. This keeps every request under Cloudflare's 100s origin timeout for wide windows like `newer_than:7d`. Items are claimed with `FOR UPDATE SKIP LOCKED`, so two tabs (or a retried request) cannot double-process an email. Writes are idempotent on `email_message_id`, so a step killed mid-email is safe to retry.
 
 ## Testing
 
@@ -104,6 +110,8 @@ reach Zero-Data-Retention endpoints. A model without a ZDR endpoint fails loudly
 ("No endpoints found matching your data policy"). Check with
 `curl https://openrouter.ai/api/v1/endpoints/zdr | jq '.data[].model_id' | sort -u`.
 Cron: `CRON_SECRET` (required to call `/api/process-emails` in prod; bypassed in dev).
+Debug runs: `DEBUG_STEP_BUDGET_MS` (optional, default `40000`) caps how long a
+single `/api/debug/runs/[id]/step` request spends processing before returning.
 `DATABASE_URL` starting with `prisma+` triggers Accelerate path in `src/lib/prisma.ts`; otherwise PgAdapter is used and the `schema` query param is honored.
 
 ## Adding things

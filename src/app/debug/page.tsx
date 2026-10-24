@@ -37,8 +37,9 @@ export default async function DebugPage() {
         <div className="space-y-1">
           <h2 className="text-2xl font-bold">Debug Email Pipeline</h2>
           <p className="text-sm text-muted-foreground">
-            Re-run the Gmail &rarr; Gemini extractor and inspect every email,
-            the parsed AI output, and why it was (or wasn&apos;t) saved.
+            Re-run the Gmail &rarr; AI extractor and inspect every email, the
+            parsed AI output, and why it was (or wasn&apos;t) saved. Runs are
+            processed in short chunks and can be resumed if interrupted.
             Defaults to dry-run so nothing is written to the database.
           </p>
         </div>

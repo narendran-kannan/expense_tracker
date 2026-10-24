@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { manuallyAddFromDebug } from "@/app/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,16 +57,33 @@ interface ProcessedError {
   message: string;
 }
 
+type RunStatus = "pending" | "running" | "completed" | "failed" | "canceled";
+
 interface RunResult {
-  message: string;
+  run_id: string;
+  status: RunStatus;
   dry_run: boolean;
+  query_used: string;
+  limit: number;
+  total_emails_found: number;
+  items_total: number;
+  items_completed: number;
+  remaining: number;
   processed: number;
   skipped_duplicates: number;
   skipped_junk: number;
-  total_emails_found: number;
-  query_used: string;
+  message: string;
   transactions: ProcessedEntry[];
   errors?: ProcessedError[];
+  started_at: string;
+  finished_at: string | null;
+  run_error?: string | null;
+}
+
+const TERMINAL_STATUSES: RunStatus[] = ["completed", "failed", "canceled"];
+
+function isTerminal(status: RunStatus) {
+  return TERMINAL_STATUSES.includes(status);
 }
 
 const DEFAULT_QUERY =
@@ -112,38 +129,125 @@ export function DebugRunner({
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [limit, setLimit] = useState(50);
   const [running, setRunning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [resumable, setResumable] = useState<RunResult | null>(null);
+  const cancelRequested = useRef(false);
 
-  async function runPipeline() {
-    setRunning(true);
-    setRunError(null);
-    setResult(null);
-    try {
-      const params = new URLSearchParams();
-      if (dryRun) params.set("dry_run", "true");
-      params.set("verbose", "true");
-      params.set("limit", String(limit));
-      if (query.trim() && query.trim() !== DEFAULT_QUERY) {
-        params.set("query", query.trim());
+  // A run keeps its state in Postgres, so a closed tab does not lose progress.
+  // Offer to pick up where an interrupted run left off.
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/debug/runs?scope=active");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!ignore && data?.run) setResumable(data.run as RunResult);
+      } catch {
+        // Resume is best-effort; a failed probe must not block the page.
       }
+    })();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
-      const res = await fetch(`/api/process-emails?${params.toString()}`, {
-        method: "GET",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setRunError(
-          data?.details || data?.error || `Request failed with ${res.status}`
-        );
+  async function readJson(res: Response) {
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(
+        data?.details || data?.error || `Request failed with ${res.status}`
+      );
+    }
+    return data;
+  }
+
+  /**
+   * Drive the run one short request at a time. Each step processes as many
+   * emails as fit in ~40s, so no single request approaches Cloudflare's 100s
+   * origin timeout even for a 7d window.
+   */
+  async function stepLoop(runId: string) {
+    let stalledSteps = 0;
+    let previousRemaining = -1;
+
+    while (true) {
+      if (cancelRequested.current) {
+        const res = await fetch(`/api/debug/runs/${runId}/cancel`, {
+          method: "POST",
+        });
+        const canceled = (await readJson(res)) as RunResult;
+        setResult(canceled);
         return;
       }
-      setResult(data as RunResult);
+
+      const res = await fetch(`/api/debug/runs/${runId}/step`, {
+        method: "POST",
+      });
+      const state = (await readJson(res)) as RunResult;
+      setResult(state);
+
+      if (isTerminal(state.status)) return;
+
+      if (state.remaining === previousRemaining) {
+        stalledSteps++;
+        if (stalledSteps >= 3) {
+          throw new Error(
+            "Run stalled — three consecutive steps made no progress."
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } else {
+        stalledSteps = 0;
+        previousRemaining = state.remaining;
+      }
+    }
+  }
+
+  async function runPipeline(runId?: string) {
+    cancelRequested.current = false;
+    setCancelling(false);
+    setRunning(true);
+    setRunError(null);
+
+    try {
+      let id = runId;
+
+      if (!id) {
+        setResult(null);
+        setResumable(null);
+        const res = await fetch("/api/debug/runs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dry_run: dryRun,
+            query:
+              query.trim() && query.trim() !== DEFAULT_QUERY
+                ? query.trim()
+                : undefined,
+            limit,
+          }),
+        });
+        const started = (await readJson(res)) as RunResult;
+        id = started.run_id;
+        setResult(started);
+        if (isTerminal(started.status)) return;
+      }
+
+      await stepLoop(id);
     } catch (err) {
       setRunError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setRunning(false);
+      setCancelling(false);
     }
+  }
+
+  function requestCancel() {
+    cancelRequested.current = true;
+    setCancelling(true);
   }
 
   return (
@@ -169,7 +273,7 @@ export function DebugRunner({
                 id="debug-limit"
                 type="number"
                 min={1}
-                max={50}
+                max={500}
                 value={limit}
                 onChange={(e) => setLimit(parseInt(e.target.value, 10) || 50)}
                 className="w-20"
@@ -206,7 +310,7 @@ export function DebugRunner({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={runPipeline} disabled={running}>
+            <Button onClick={() => runPipeline()} disabled={running}>
               {running ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -214,6 +318,15 @@ export function DebugRunner({
               )}
               {running ? "Running…" : "Run pipeline"}
             </Button>
+            {running && (
+              <Button
+                variant="outline"
+                onClick={requestCancel}
+                disabled={cancelling}
+              >
+                {cancelling ? "Canceling…" : "Cancel"}
+              </Button>
+            )}
             {!dryRun && (
               <span className="flex items-center gap-1 text-xs text-destructive">
                 <AlertTriangle className="h-3 w-3" />
@@ -221,8 +334,59 @@ export function DebugRunner({
               </span>
             )}
           </div>
+
+          {result && !isTerminal(result.status) && (
+            <div className="space-y-1">
+              <div className="h-2 overflow-hidden rounded bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{
+                    width: `${
+                      result.items_total > 0
+                        ? Math.round(
+                            (result.items_completed / result.items_total) * 100
+                          )
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {result.items_completed}/{result.items_total} emails processed
+                {result.remaining > 0
+                  ? ` · ${result.remaining} remaining`
+                  : ""}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
+
+      {resumable && !running && (
+        <Card className="border-amber-500/40 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
+            <span>
+              An earlier run was interrupted at {resumable.items_completed}/
+              {resumable.items_total} emails.
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={() => runPipeline(resumable.run_id)}
+              >
+                Resume run
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setResumable(null)}
+              >
+                Dismiss
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {runError && (
         <Card className="border-destructive">
@@ -268,7 +432,7 @@ function ResultsView({
             />
             <Stat label="Skipped (junk)" value={result.skipped_junk} />
           </div>
-          {result.total_emails_found === 0 && (
+          {result.status === "completed" && result.total_emails_found === 0 && (
             <div className="rounded border border-amber-500/40 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
               Gmail returned <strong>0 emails</strong> for this query. If
               you&apos;re missing an expense, this is the most likely cause —

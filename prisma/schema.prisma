@@ -121,6 +121,41 @@ model SkippedEmail {
   created_at       DateTime @default(now())
 }
 
+/// A chunked email-pipeline run driven by the /debug page.
+/// One run = the result of one Gmail search; `items` are processed in short
+/// requests so a single HTTP call never hits the Cloudflare 100s ceiling.
+model PipelineRun {
+  id          String         @id @default(uuid())
+  status      String         @default("pending") // pending | running | completed | failed | canceled
+  dry_run     Boolean        @default(true)
+  query       String
+  limit       Int
+  total_found Int            @default(0)
+  driver      String         @default("debug") // "debug" | "cron"
+  error       String?
+  started_at  DateTime       @default(now())
+  finished_at DateTime?
+  items       PipelineItem[]
+
+  @@index([status, started_at])
+}
+
+model PipelineItem {
+  id               String      @id @default(uuid())
+  run_id           String
+  run              PipelineRun @relation(fields: [run_id], references: [id], onDelete: Cascade)
+  email_message_id String
+  status           String      @default("pending") // pending | processing | done | error | canceled
+  result           Json?
+  error            String?
+  attempts         Int         @default(0)
+  locked_at        DateTime?
+  created_at       DateTime    @default(now())
+
+  @@unique([run_id, email_message_id])
+  @@index([run_id, status, created_at])
+}
+
 model Insight {
   id                     String   @id @default(uuid())
   period_type            String
