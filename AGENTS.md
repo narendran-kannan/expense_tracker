@@ -10,7 +10,7 @@ Single-user Next.js 16 dashboard that parses Indian bank alert emails (Gmail API
 - Vercel AI SDK + `@openrouter/ai-sdk-provider` (`ai` v6 → provider v2.x) with Zod schemas for structured output
 - Tailwind CSS 4 + shadcn/ui (new-york style) — do NOT hand-edit `src/components/ui/*`
 - Dev/prod port is **3003**, not 3000 (README still says 3000 — config is the source of truth)
-- Node 24 (`.nvmrc`)
+- Node 24 (`.nvmrc` / `mise.toml`)
 
 ## Commands
 

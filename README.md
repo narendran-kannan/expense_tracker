@@ -45,7 +45,7 @@ You can add support for other banks by setting the `GMAIL_SEARCH_QUERY` environm
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 24 (see `.nvmrc` or `mise.toml`)
 - PostgreSQL database
 - Google Cloud project with Gmail API enabled
 - Gemini API key
@@ -57,6 +57,8 @@ git clone https://github.com/narendran-kannan/expense-tracker.git
 cd expense-tracker
 npm install
 ```
+
+If you use [mise](https://mise.jdx.dev/), run `mise install` to get Node 24 from `mise.toml`; otherwise use `.nvmrc` or your version manager.
 
 ### 2. Configure environment variables
 
