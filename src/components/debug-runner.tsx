@@ -24,6 +24,7 @@ type EntryStatus =
   | "duplicate_skipped"
   | "duplicate_flagged"
   | "junk_skipped"
+  | "ignored_skipped"
   | "would_save"
   | "would_skip_junk"
   | "would_flag_duplicate";
@@ -72,6 +73,7 @@ interface RunResult {
   processed: number;
   skipped_duplicates: number;
   skipped_junk: number;
+  skipped_ignored: number;
   message: string;
   transactions: ProcessedEntry[];
   errors?: ProcessedError[];
@@ -102,6 +104,7 @@ const STATUS_LABELS: Record<EntryStatus, string> = {
   duplicate_skipped: "Already processed",
   duplicate_flagged: "Saved (flagged duplicate)",
   junk_skipped: "Skipped as junk",
+  ignored_skipped: "Ignored",
   would_save: "Would save",
   would_skip_junk: "Would skip as junk",
   would_flag_duplicate: "Would save (flagged duplicate)",
@@ -115,6 +118,7 @@ const STATUS_VARIANTS: Record<
   duplicate_skipped: "secondary",
   duplicate_flagged: "outline",
   junk_skipped: "destructive",
+  ignored_skipped: "secondary",
   would_save: "default",
   would_skip_junk: "destructive",
   would_flag_duplicate: "outline",
@@ -423,13 +427,14 @@ function ResultsView({
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm">{result.message}</p>
-          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
             <Stat label="Emails found" value={result.total_emails_found} />
             <Stat label="Processed" value={result.processed} />
             <Stat
               label="Skipped (dup)"
               value={result.skipped_duplicates}
             />
+            <Stat label="Skipped (ignored)" value={result.skipped_ignored} />
             <Stat label="Skipped (junk)" value={result.skipped_junk} />
           </div>
           {result.status === "completed" && result.total_emails_found === 0 && (

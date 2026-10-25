@@ -22,6 +22,7 @@ const mockTransaction = {
   confidence_score: 0.95,
   needs_review: false,
   remarks: null,
+  email_message_id: "msg-1",
 };
 
 const categories = [
@@ -77,7 +78,7 @@ describe("TransactionTable delete confirmation", () => {
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText("Delete Transaction")).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/This will permanently delete/)
+      within(dialog).getByText(/This moves the/)
     ).toBeInTheDocument();
     expect(within(dialog).getByText(/Amazon/)).toBeInTheDocument();
   });
@@ -120,6 +121,28 @@ describe("TransactionTable delete confirmation", () => {
     await user.click(confirmButton);
 
     expect(deleteTransaction).toHaveBeenCalledWith("txn-1");
+  });
+
+  it("passes matchFingerprint when also-ignore is checked", async () => {
+    const { deleteTransaction } = await import("@/app/actions");
+    const user = userEvent.setup();
+
+    render(
+      <TransactionTable
+        transactions={[mockTransaction]}
+        categories={categories}
+      />
+    );
+
+    await user.click(getTriggerButton());
+
+    const dialog = screen.getByRole("alertdialog");
+    await user.click(within(dialog).getByRole("checkbox"));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(deleteTransaction).toHaveBeenCalledWith("txn-1", {
+      matchFingerprint: true,
+    });
   });
 });
 

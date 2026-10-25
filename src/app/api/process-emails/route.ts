@@ -8,6 +8,7 @@ import {
   type ProcessedEntry,
   type ProcessedError,
 } from "@/lib/pipeline";
+import { purgeExpiredIgnores } from "@/lib/ignore";
 
 export const runtime = "nodejs";
 
@@ -49,6 +50,17 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Retention cleanup is maintenance, not part of the Gmail run: do it first
+    // so a Gmail/AI failure cannot leave tombstones alive past their window.
+    let purgedIgnores = 0;
+    if (!dryRun) {
+      try {
+        purgedIgnores = await purgeExpiredIgnores();
+      } catch (cleanupError) {
+        console.error("Ignored transaction cleanup error:", cleanupError);
+      }
+    }
+
     const categoryPromptText = await getCategoryPromptText();
     const gmail = createGmailClient();
     const searchQuery = resolveSearchQuery(queryOverride);
@@ -59,6 +71,7 @@ export async function GET(request: NextRequest) {
         message: "No new bank alert emails found",
         processed: 0,
         dry_run: dryRun,
+        ignored_purged: purgedIgnores,
         total_emails_found: 0,
         query_used: searchQuery,
         transactions: [],
@@ -69,6 +82,7 @@ export async function GET(request: NextRequest) {
     let processed = 0;
     let skippedDuplicates = 0;
     let skippedJunk = 0;
+    let skippedIgnored = 0;
     const entries: ProcessedEntry[] = [];
     const errors: ProcessedError[] = [];
 
@@ -85,6 +99,10 @@ export async function GET(request: NextRequest) {
         case "duplicate_skipped":
           skippedDuplicates++;
           if (outcome.entry) entries.push(outcome.entry);
+          break;
+        case "ignored":
+          skippedIgnored++;
+          entries.push(outcome.entry);
           break;
         case "junk":
           skippedJunk++;
@@ -108,6 +126,8 @@ export async function GET(request: NextRequest) {
       processed,
       skipped_duplicates: skippedDuplicates,
       skipped_junk: skippedJunk,
+      skipped_ignored: skippedIgnored,
+      ignored_purged: purgedIgnores,
       total_emails_found: messageIds.length,
       transactions: entries,
       errors: errors.length > 0 ? errors : undefined,

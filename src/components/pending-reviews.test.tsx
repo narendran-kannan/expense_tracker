@@ -74,7 +74,7 @@ describe("PendingReviews delete confirmation", () => {
     expect(dialog).toBeInTheDocument();
     expect(within(dialog).getByText("Delete Transaction")).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/This will permanently delete/)
+      within(dialog).getByText(/This moves the/)
     ).toBeInTheDocument();
     expect(within(dialog).getByText(/Swiggy/)).toBeInTheDocument();
   });

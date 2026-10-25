@@ -6,6 +6,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
+  Ban,
   Bug,
   CalendarClock,
   ChevronDown,
@@ -43,6 +44,7 @@ const PRIMARY_NAV_ITEMS = [
 
 const MORE_NAV_ITEMS = [
   { href: "/categories", label: "Categories", icon: FolderTree },
+  { href: "/ignored", label: "Ignored", icon: Ban },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/debug", label: "Debug", icon: Bug },
 ];

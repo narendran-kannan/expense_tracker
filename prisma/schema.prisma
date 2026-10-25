@@ -22,32 +22,32 @@ model Category {
 }
 
 model Transaction {
-  id                  String      @id @default(uuid())
-  amount              Float
-  merchant            String
-  date                DateTime
-  category            String
-  categoryId          String?
-  subcategoryId       String?
-  categoryRef         Category?   @relation("TransactionCategory", fields: [categoryId], references: [id])
-  subcategoryRef      Category?   @relation("TransactionSubcategory", fields: [subcategoryId], references: [id])
-  is_cc_payment       Boolean     @default(false)
-  confidence_score    Float
-  needs_review        Boolean     @default(true)
-  email_message_id    String?     @unique
-  remarks             String?
-  source              String      @default("email")
-  recoverable_amount  Float?
-  counterparty        String?
-  recovery_status     String?
-  group_id            String?
-  is_emi              Boolean     @default(false)
-  emi_tenure_months   Int?
-  emi_monthly_amount  Float?
-  emi_start_date      DateTime?
-  repayments          Repayment[]
-  created_at          DateTime    @default(now())
-  updated_at          DateTime    @updatedAt
+  id                 String      @id @default(uuid())
+  amount             Float
+  merchant           String
+  date               DateTime
+  category           String
+  categoryId         String?
+  subcategoryId      String?
+  categoryRef        Category?   @relation("TransactionCategory", fields: [categoryId], references: [id])
+  subcategoryRef     Category?   @relation("TransactionSubcategory", fields: [subcategoryId], references: [id])
+  is_cc_payment      Boolean     @default(false)
+  confidence_score   Float
+  needs_review       Boolean     @default(true)
+  email_message_id   String?     @unique
+  remarks            String?
+  source             String      @default("email")
+  recoverable_amount Float?
+  counterparty       String?
+  recovery_status    String?
+  group_id           String?
+  is_emi             Boolean     @default(false)
+  emi_tenure_months  Int?
+  emi_monthly_amount Float?
+  emi_start_date     DateTime?
+  repayments         Repayment[]
+  created_at         DateTime    @default(now())
+  updated_at         DateTime    @updatedAt
 
   @@index([amount, merchant, date], name: "idx_dedup")
   @@index([categoryId])
@@ -82,16 +82,16 @@ model Budget {
 }
 
 model BudgetOverage {
-  id             String           @id @default(uuid())
-  month          Int
-  year           Int
+  id              String           @id @default(uuid())
+  month           Int
+  year            Int
   computed_amount Float?
   override_amount Float?
-  owed_to        String?
-  status         String           @default("outstanding")
-  payments       OveragePayment[]
-  created_at     DateTime         @default(now())
-  updated_at     DateTime         @updatedAt
+  owed_to         String?
+  status          String           @default("outstanding")
+  payments        OveragePayment[]
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
 
   @@unique([month, year])
   @@index([year, month])
@@ -108,6 +108,28 @@ model OveragePayment {
   created_at DateTime      @default(now())
 
   @@index([overage_id])
+}
+
+/// A soft-deleted transaction. Keeping this row is what stops the overlapping
+/// Gmail search from re-importing the source email. The daily cron purges rows
+/// older than IGNORED_RETENTION_DAYS (default 30).
+model IgnoredTransaction {
+  id                      String   @id @default(uuid())
+  email_message_id        String?  @unique
+  amount                  Float
+  merchant                String
+  date                    DateTime
+  category                String
+  is_cc_payment           Boolean  @default(false)
+  match_fingerprint       Boolean  @default(false)
+  reason                  String?
+  source                  String   @default("transaction")
+  original_transaction_id String?
+  snapshot                Json?
+  created_at              DateTime @default(now())
+
+  @@index([created_at])
+  @@index([amount, merchant, date])
 }
 
 model SkippedEmail {
@@ -157,21 +179,21 @@ model PipelineItem {
 }
 
 model Insight {
-  id                     String   @id @default(uuid())
-  period_type            String
-  period_key             String
-  month                  Int?
-  year                   Int
-  stats                  Json
-  summary                String
-  trends                 Json
-  anomalies              Json
-  suggestions            Json
-  tx_count_at_generation Int
+  id                      String   @id @default(uuid())
+  period_type             String
+  period_key              String
+  month                   Int?
+  year                    Int
+  stats                   Json
+  summary                 String
+  trends                  Json
+  anomalies               Json
+  suggestions             Json
+  tx_count_at_generation  Int
   tx_latest_at_generation DateTime
-  model                  String   @default("gemini-2.5-pro")
-  created_at             DateTime @default(now())
-  updated_at             DateTime @updatedAt
+  model                   String   @default("gemini-2.5-pro")
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
 
   @@unique([period_type, period_key])
   @@index([year, month])

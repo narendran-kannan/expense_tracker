@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { txStore, categoryStore } = vi.hoisted(() => ({
+const { txStore, categoryStore, ignoredStore, skippedStore } = vi.hoisted(() => ({
   txStore: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     findMany: vi.fn<(...args: any[]) => Promise<any>>(async () => []),
@@ -17,12 +17,26 @@ const { txStore, categoryStore } = vi.hoisted(() => ({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     findFirst: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
   },
+  ignoredStore: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createMany: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      count: 0,
+    })),
+  },
+  skippedStore: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    deleteMany: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      count: 0,
+    })),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     transaction: txStore,
     category: categoryStore,
+    ignoredTransaction: ignoredStore,
+    skippedEmail: skippedStore,
   },
 }));
 
@@ -37,12 +51,45 @@ import {
 } from "./actions";
 import { revalidatePath } from "next/cache";
 
+function makeTx(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    amount: 100,
+    merchant: "Swiggy",
+    date: new Date("2026-03-01"),
+    category: "Food",
+    categoryId: null,
+    subcategoryId: null,
+    subcategoryRef: null,
+    is_cc_payment: false,
+    confidence_score: 1,
+    needs_review: false,
+    email_message_id: null,
+    remarks: null,
+    source: "manual",
+    recoverable_amount: null,
+    counterparty: null,
+    recovery_status: null,
+    group_id: null,
+    is_emi: false,
+    emi_tenure_months: null,
+    emi_monthly_amount: null,
+    emi_start_date: null,
+    repayments: [],
+    created_at: new Date("2026-03-01"),
+    updated_at: new Date("2026-03-01"),
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   txStore.findMany.mockResolvedValue([]);
   txStore.updateMany.mockResolvedValue({ count: 0 });
   txStore.deleteMany.mockResolvedValue({ count: 0 });
   categoryStore.findFirst.mockResolvedValue(null);
+  ignoredStore.createMany.mockResolvedValue({ count: 0 });
+  skippedStore.deleteMany.mockResolvedValue({ count: 0 });
 });
 
 describe("bulk actions input validation", () => {
@@ -124,12 +171,14 @@ describe("bulkApproveTransactions", () => {
 });
 
 describe("bulkDeleteTransactions", () => {
-  it("deletes all ids in one query", async () => {
+  it("moves all ids to Ignored in one query", async () => {
+    txStore.findMany.mockResolvedValueOnce([makeTx("t1"), makeTx("t2")]);
     txStore.deleteMany.mockResolvedValue({ count: 2 });
 
     const count = await bulkDeleteTransactions(["t1", "t2"]);
 
     expect(count).toBe(2);
+    expect(ignoredStore.createMany).toHaveBeenCalledTimes(1);
     expect(txStore.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["t1", "t2"] } },
     });
@@ -138,10 +187,10 @@ describe("bulkDeleteTransactions", () => {
   it("dissolves each affected group left with one or fewer members", async () => {
     txStore.findMany
       .mockResolvedValueOnce([
-        { group_id: "g1" },
-        { group_id: "g1" },
-        { group_id: "g2" },
-        { group_id: null },
+        makeTx("t1", { group_id: "g1" }),
+        makeTx("t2", { group_id: "g1" }),
+        makeTx("t3", { group_id: "g2" }),
+        makeTx("t4"),
       ])
       .mockResolvedValueOnce([{ id: "survivor" }])
       .mockResolvedValueOnce([{ id: "a" }, { id: "b" }]);

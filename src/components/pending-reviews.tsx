@@ -253,7 +253,10 @@ function ReviewRow({
                   <AlertDialogHeader>
                     <AlertDialogTitle>Delete Transaction</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will permanently delete the {formatINR(t.amount)} transaction to {t.merchant}. This action cannot be undone.
+                      This moves the {formatINR(t.amount)} transaction at{" "}
+                      {t.merchant} to Ignored. The source email will not be
+                      imported again, and you can restore it from Ignored for 30
+                      days.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>

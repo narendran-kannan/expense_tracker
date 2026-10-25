@@ -8,6 +8,7 @@ import {
   type ProcessedEntry,
   type ProcessedError,
 } from "@/lib/pipeline";
+import { purgeExpiredIgnores } from "@/lib/ignore";
 
 /**
  * DB-backed, chunked execution of the email pipeline for the /debug page.
@@ -45,6 +46,7 @@ export interface RunState {
   processed: number;
   skipped_duplicates: number;
   skipped_junk: number;
+  skipped_ignored: number;
   message: string;
   transactions: ProcessedEntry[];
   errors?: ProcessedError[];
@@ -97,6 +99,7 @@ function summarize(run: RunWithItems): RunState {
   let processed = 0;
   let skippedDuplicates = 0;
   let skippedJunk = 0;
+  let skippedIgnored = 0;
   let itemsCompleted = 0;
 
   for (const item of run.items) {
@@ -105,6 +108,9 @@ function summarize(run: RunWithItems): RunState {
       switch (entry.status) {
         case "duplicate_skipped":
           skippedDuplicates++;
+          break;
+        case "ignored_skipped":
+          skippedIgnored++;
           break;
         case "junk_skipped":
         case "would_skip_junk":
@@ -170,6 +176,7 @@ function summarize(run: RunWithItems): RunState {
     processed,
     skipped_duplicates: skippedDuplicates,
     skipped_junk: skippedJunk,
+    skipped_ignored: skippedIgnored,
     message,
     transactions,
     errors: errors.length > 0 ? errors : undefined,
@@ -262,6 +269,7 @@ export async function createRun({
   const messageIds = await listEmailIds(gmail, searchQuery, runLimit);
 
   await pruneOldRuns();
+  await purgeExpiredIgnores();
   await cancelActiveRuns();
 
   const run = await prisma.pipelineRun.create({

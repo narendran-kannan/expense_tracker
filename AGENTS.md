@@ -46,6 +46,7 @@ src/
     analytics/page.tsx
     categories/           # category management page
     debug/                # email pipeline debugger — drives chunked runs and polls
+    ignored/              # soft-deleted transactions + restore / purge-now
     import/               # XLSX import flow (uses xlsx lib)
     login/page.tsx
     api/
@@ -63,6 +64,8 @@ src/
     schemas.ts            # Zod schemas — fields use .describe() for AI structured output
     categories.ts         # DEFAULT_CATEGORIES (source for db:sync-categories)
     email.ts              # html-to-text helpers
+    gmail.ts              # Gmail OAuth client + mark-messages-read helper
+    ignore.ts             # soft-delete tombstones, retention + full snapshot
     pipeline.ts           # per-email Gmail → AI → DB unit (prompt lives here)
     pipeline-run.ts       # DB-backed chunked runs: create/claim/step/cancel
     session-cookie.ts     # cheap session check for API routes
@@ -70,7 +73,7 @@ src/
   middleware.ts           # auth guard — allows /login, /api/auth, /api/process-emails, /api/seed
   generated/prisma/       # gitignored Prisma client output
 prisma/
-  schema.prisma           # 6 models: Category, Transaction, Repayment, Budget, SkippedEmail, Insight
+  schema.prisma           # 7 models: Category, Transaction, Repayment, Budget, SkippedEmail, IgnoredTransaction, Insight
   migrations/             # committed; required for prod
 scripts/
   sync-categories.mjs       # run by npm build
@@ -82,7 +85,9 @@ scripts/
 - Path alias `@/*` → `src/*`. Use it; do not use relative `../` across dirs.
 - Prisma client import: `@/generated/prisma/client` (not `@prisma/client`).
 - DB fields are snake_case (`is_cc_payment`, `confidence_score`, `needs_review`, `email_message_id`). TS code in `src/` is camelCase — preserve the mismatch.
-- Server actions in `src/app/actions.ts` revalidate three paths (`/`, `/analytics`, `/categories`) via the `revalidateAppPaths()` helper. Use it after mutations.
+- Server actions in `src/app/actions.ts` revalidate the app paths via the `revalidateAppPaths()` helper. Use it after mutations.
+- Delete is a soft delete: `deleteTransaction` / `bulkDeleteTransactions` move the row to `IgnoredTransaction` and then delete it. The tombstone is what stops the overlapping Gmail search from re-importing the email. `restoreIgnoredTransaction` rebuilds the transaction (including repayments/EMI) from the `snapshot` JSON. The daily cron purges tombstones after `IGNORED_RETENTION_DAYS` (default 30); `/ignored` also offers per-row Delete forever. Do not bypass this with `prisma.transaction.delete` for user-facing deletes.
+- Pipeline ignores: `processOneEmail` checks `IgnoredTransaction.email_message_id` before fetching Gmail, and optionally matches `match_fingerprint` rows by `(amount, merchant, day)` after extraction. An ignored email is marked read so `is:unread` stops returning it.
 - Page components: `searchParams: Promise<{...}>` then `await searchParams` (Next.js 16 async params — easy to get wrong).
 - Use `useTransition` for invoking server actions from client components.
 - Prisma `Date` → serialize to ISO string before passing to client components.
@@ -110,6 +115,8 @@ reach Zero-Data-Retention endpoints. A model without a ZDR endpoint fails loudly
 ("No endpoints found matching your data policy"). Check with
 `curl https://openrouter.ai/api/v1/endpoints/zdr | jq '.data[].model_id' | sort -u`.
 Cron: `CRON_SECRET` (required to call `/api/process-emails` in prod; bypassed in dev).
+Ignored: `IGNORED_RETENTION_DAYS` (optional, default `30`) is how long a delete
+tombstone lives; the daily cron (and debug run creation) purges older rows.
 Debug runs: `DEBUG_STEP_BUDGET_MS` (optional, default `40000`) caps how long a
 single `/api/debug/runs/[id]/step` request spends processing before returning.
 `DATABASE_URL` starting with `prisma+` triggers Accelerate path in `src/lib/prisma.ts`; otherwise PgAdapter is used and the `schema` query param is honored.

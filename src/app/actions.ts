@@ -40,6 +40,12 @@ import {
 } from "@/lib/overage";
 import { effectiveSpend } from "@/lib/recoverable";
 import { isCountedSpend } from "@/lib/spend";
+import {
+  ignoredDaysLeft,
+  toIgnoredSnapshot,
+  type IgnoredTransactionSnapshot,
+} from "@/lib/ignore";
+import type { Prisma } from "@/generated/prisma/client";
 
 export interface CategoryWithSubs {
   id: string;
@@ -55,6 +61,7 @@ async function revalidateAppPaths() {
   revalidatePath("/recoverables");
   revalidatePath("/emis");
   revalidatePath("/tracked");
+  revalidatePath("/ignored");
 }
 
 export async function getTransactions(month?: number, year?: number) {
@@ -752,18 +759,203 @@ export async function updateTransaction(
   await revalidateAppPaths();
 }
 
-export async function deleteTransaction(id: string) {
-  const tx = await prisma.transaction.findUnique({
-    where: { id },
-    select: { group_id: true },
+/**
+ * Delete = soft delete. The transaction is removed from every query, but a
+ * tombstone keeps the source email from being re-imported by the overlapping
+ * Gmail search. Tombstones are purged after IGNORED_RETENTION_DAYS (30 by
+ * default) and can be restored from /ignored in the meantime.
+ */
+export async function deleteTransaction(
+  id: string,
+  options?: { matchFingerprint?: boolean }
+) {
+  await moveTransactionsToIgnored([id], options);
+}
+
+async function moveTransactionsToIgnored(
+  ids: string[],
+  options?: { matchFingerprint?: boolean }
+): Promise<number> {
+  if (ids.length === 0) return 0;
+
+  const txns = await prisma.transaction.findMany({
+    where: { id: { in: ids } },
+    include: {
+      subcategoryRef: { select: { name: true } },
+      repayments: true,
+    },
   });
 
-  await prisma.transaction.delete({ where: { id } });
+  if (txns.length === 0) return 0;
 
-  if (tx?.group_id) {
-    await cleanupGroup(tx.group_id);
+  const matchFingerprint = options?.matchFingerprint === true;
+
+  await prisma.ignoredTransaction.createMany({
+    data: txns.map((tx) => ({
+      email_message_id: tx.email_message_id,
+      amount: tx.amount,
+      merchant: tx.merchant,
+      date: tx.date,
+      category: tx.category,
+      is_cc_payment: tx.is_cc_payment,
+      match_fingerprint: matchFingerprint && Boolean(tx.email_message_id),
+      reason: "Deleted from dashboard",
+      source: tx.source,
+      original_transaction_id: tx.id,
+      snapshot: toIgnoredSnapshot(tx) as unknown as Prisma.InputJsonValue,
+    })),
+    skipDuplicates: true,
+  });
+
+  const { count } = await prisma.transaction.deleteMany({
+    where: { id: { in: ids } },
+  });
+
+  const groupIds = new Set(
+    txns.map((t) => t.group_id).filter((g): g is string => Boolean(g))
+  );
+  for (const groupId of groupIds) {
+    await cleanupGroup(groupId);
   }
 
+  const emailIds = txns
+    .map((t) => t.email_message_id)
+    .filter((id): id is string => Boolean(id));
+
+  if (emailIds.length > 0) {
+    await prisma.skippedEmail.deleteMany({
+      where: { email_message_id: { in: emailIds } },
+    });
+    await markEmailsRead(emailIds);
+  }
+
+  await revalidateAppPaths();
+  return count;
+}
+
+/** Best-effort Gmail cleanup for deletes made between cron runs. */
+async function markEmailsRead(messageIds: string[]) {
+  if (messageIds.length === 0) return;
+
+  try {
+    const { createGmailClient, hasGmailCredentials, markMessagesRead } =
+      await import("@/lib/gmail");
+    if (!hasGmailCredentials()) return;
+    await markMessagesRead(createGmailClient(), messageIds);
+  } catch (error) {
+    console.error("Failed to mark deleted emails as read:", error);
+  }
+}
+
+export async function restoreIgnoredTransaction(id: string) {
+  const ignored = await prisma.ignoredTransaction.findUnique({ where: { id } });
+  if (!ignored) throw new Error("Ignored transaction not found");
+
+  if (ignored.email_message_id) {
+    const existing = await prisma.transaction.findUnique({
+      where: { email_message_id: ignored.email_message_id },
+    });
+    if (existing) {
+      throw new Error("A transaction for this email already exists");
+    }
+  }
+
+  const snapshot = ignored.snapshot as unknown as IgnoredTransactionSnapshot | null;
+
+  if (snapshot) {
+    const { categoryId, subcategoryId } = await resolveCategoryIds(
+      snapshot.category,
+      snapshot.subcategory
+    );
+
+    await prisma.transaction.create({
+      data: {
+        id: snapshot.id,
+        amount: snapshot.amount,
+        merchant: snapshot.merchant,
+        date: new Date(snapshot.date),
+        category: snapshot.category,
+        categoryId,
+        subcategoryId,
+        is_cc_payment: snapshot.is_cc_payment,
+        confidence_score: snapshot.confidence_score,
+        needs_review: snapshot.needs_review,
+        remarks: snapshot.remarks,
+        email_message_id: ignored.email_message_id,
+        source: snapshot.source,
+        recoverable_amount: snapshot.recoverable_amount,
+        counterparty: snapshot.counterparty,
+        recovery_status: snapshot.recovery_status,
+        group_id: snapshot.group_id,
+        is_emi: snapshot.is_emi,
+        emi_tenure_months: snapshot.emi_tenure_months,
+        emi_monthly_amount: snapshot.emi_monthly_amount,
+        emi_start_date: snapshot.emi_start_date
+          ? new Date(snapshot.emi_start_date)
+          : null,
+        created_at: new Date(snapshot.created_at),
+        repayments: {
+          create: (snapshot.repayments ?? []).map((repayment) => ({
+            id: repayment.id,
+            amount: repayment.amount,
+            date: new Date(repayment.date),
+            note: repayment.note,
+            created_at: new Date(repayment.created_at),
+          })),
+        },
+      },
+    });
+  } else {
+    const { categoryId, subcategoryId } = await resolveCategoryIds(
+      ignored.category,
+      null
+    );
+    await prisma.transaction.create({
+      data: {
+        amount: ignored.amount,
+        merchant: ignored.merchant,
+        date: ignored.date,
+        category: ignored.category,
+        categoryId,
+        subcategoryId,
+        is_cc_payment: ignored.is_cc_payment,
+        confidence_score: 1,
+        needs_review: false,
+        email_message_id: ignored.email_message_id,
+        source: ignored.source,
+      },
+    });
+  }
+
+  await prisma.ignoredTransaction.delete({ where: { id } });
+  await revalidateAppPaths();
+}
+
+export async function getIgnoredTransactions() {
+  const rows = await prisma.ignoredTransaction.findMany({
+    orderBy: { created_at: "desc" },
+    select: {
+      id: true,
+      amount: true,
+      merchant: true,
+      date: true,
+      category: true,
+      is_cc_payment: true,
+      match_fingerprint: true,
+      source: true,
+      created_at: true,
+    },
+  });
+
+  return rows.map((row) => ({
+    ...row,
+    days_left: ignoredDaysLeft(row.created_at),
+  }));
+}
+
+/** Permanent delete from the Ignored list — skips the retention window. */
+export async function deleteIgnoredTransaction(id: string) {
+  await prisma.ignoredTransaction.delete({ where: { id } });
   await revalidateAppPaths();
 }
 
@@ -875,27 +1067,12 @@ export async function bulkApproveTransactions(ids: string[]): Promise<number> {
   return count;
 }
 
-export async function bulkDeleteTransactions(ids: string[]): Promise<number> {
+export async function bulkDeleteTransactions(
+  ids: string[],
+  options?: { matchFingerprint?: boolean }
+): Promise<number> {
   const uniqueIds = requireBulkIds(ids);
-
-  const txns = await prisma.transaction.findMany({
-    where: { id: { in: uniqueIds } },
-    select: { group_id: true },
-  });
-
-  const { count } = await prisma.transaction.deleteMany({
-    where: { id: { in: uniqueIds } },
-  });
-
-  const groupIds = new Set(
-    txns.map((t) => t.group_id).filter((g): g is string => Boolean(g))
-  );
-  for (const groupId of groupIds) {
-    await cleanupGroup(groupId);
-  }
-
-  await revalidateAppPaths();
-  return count;
+  return moveTransactionsToIgnored(uniqueIds, options);
 }
 
 export async function getSkippedEmails() {

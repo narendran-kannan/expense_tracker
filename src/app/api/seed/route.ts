@@ -40,6 +40,7 @@ export async function POST() {
 
   try {
     await prisma.transaction.deleteMany();
+    await prisma.ignoredTransaction.deleteMany();
     await prisma.category.deleteMany();
 
     const categoryMap = new Map<string, string>();

@@ -86,6 +86,7 @@ interface Transaction {
   confidence_score: number;
   needs_review: boolean;
   remarks: string | null;
+  email_message_id?: string | null;
   recoverable_amount?: number | null;
   recovery_status?: string | null;
   counterparty?: string | null;
@@ -165,6 +166,7 @@ export function TransactionTable({
   const [bulkCategoryOpen, setBulkCategoryOpen] = useState(false);
   const [bulkCategory, setBulkCategory] = useState("");
   const [bulkSubcategory, setBulkSubcategory] = useState<string | null>(null);
+  const [bulkIgnoreSimilar, setBulkIgnoreSimilar] = useState(false);
   const [isBulkPending, startBulk] = useTransition();
 
   function toggleSelected(id: string) {
@@ -245,6 +247,9 @@ export function TransactionTable({
     [filtered, selected]
   );
   const selectedIds = selectedTransactions.map((t) => t.id);
+  const selectedHasEmail = selectedTransactions.some(
+    (t) => t.email_message_id
+  );
   const selectedReviewIds = selectedTransactions
     .filter((t) => t.needs_review)
     .map((t) => t.id);
@@ -276,7 +281,11 @@ export function TransactionTable({
 
   function handleBulkDelete() {
     if (selectedIds.length === 0) return;
-    runBulk(() => bulkDeleteTransactions(selectedIds));
+    runBulk(() =>
+      bulkIgnoreSimilar
+        ? bulkDeleteTransactions(selectedIds, { matchFingerprint: true })
+        : bulkDeleteTransactions(selectedIds)
+    );
   }
 
   function openBulkCategory() {
@@ -527,13 +536,29 @@ export function TransactionTable({
                           {selectedIds.length === 1 ? "" : "s"}
                         </AlertDialogTitle>
                         <AlertDialogDescription>
-                          This will permanently delete {selectedIds.length}{" "}
-                          transaction{selectedIds.length === 1 ? "" : "s"}{" "}
-                          totalling {formatINR(selectedAmount)}, including any
-                          repayments recorded against them. This action cannot
-                          be undone.
+                          This moves {selectedIds.length} transaction
+                          {selectedIds.length === 1 ? "" : "s"} totalling{" "}
+                          {formatINR(selectedAmount)} to Ignored. They stop
+                          counting immediately, their emails will not be
+                          imported again, and they can be restored from Ignored
+                          for 30 days.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
+                      {selectedHasEmail && (
+                        <label className="flex items-start gap-2 text-sm">
+                          <Checkbox
+                            checked={bulkIgnoreSimilar}
+                            onCheckedChange={(checked) =>
+                              setBulkIgnoreSimilar(checked === true)
+                            }
+                            className="mt-0.5"
+                          />
+                          <span>
+                            Also ignore other emails with the same amount,
+                            merchant and date
+                          </span>
+                        </label>
+                      )}
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction onClick={handleBulkDelete}>
@@ -758,6 +783,7 @@ function TransactionRow({
   const [emiStart, setEmiStart] = useState(() =>
     toDateInputValue(t.emi_start_date ?? t.date)
   );
+  const [alsoIgnoreSimilar, setAlsoIgnoreSimilar] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const isRecoverable = t.recoverable_amount != null;
@@ -787,7 +813,11 @@ function TransactionRow({
   }
 
   function handleDelete() {
-    startTransition(() => deleteTransaction(t.id));
+    startTransition(() =>
+      alsoIgnoreSimilar
+        ? deleteTransaction(t.id, { matchFingerprint: true })
+        : deleteTransaction(t.id)
+    );
   }
 
   function handleClone() {
@@ -1059,9 +1089,28 @@ function TransactionRow({
                   <AlertDialogHeader>
                     <AlertDialogTitle>Delete Transaction</AlertDialogTitle>
                     <AlertDialogDescription>
-                      This will permanently delete the {formatINR(t.amount)} transaction to {t.merchant}. This action cannot be undone.
+                      This moves the {formatINR(t.amount)} transaction at{" "}
+                      {t.merchant} to Ignored. It stops counting immediately and
+                      the source email will not be imported again. You can
+                      restore it from Ignored for 30 days; after that it is
+                      permanently purged.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
+                  {t.email_message_id && (
+                    <label className="flex items-start gap-2 text-sm">
+                      <Checkbox
+                        checked={alsoIgnoreSimilar}
+                        onCheckedChange={(checked) =>
+                          setAlsoIgnoreSimilar(checked === true)
+                        }
+                        className="mt-0.5"
+                      />
+                      <span>
+                        Also ignore other emails with the same amount, merchant
+                        and date
+                      </span>
+                    </label>
+                  )}
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                     <AlertDialogAction onClick={handleDelete}>

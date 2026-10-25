@@ -39,8 +39,9 @@ export function ConfirmDelete({
             Delete transaction?
           </span>
           <span className="text-[13px] font-semibold text-[var(--m-text-tertiary)]">
-            This permanently deletes the {formatINR(transaction.amount)}{" "}
-            transaction to {transaction.merchant}. This cannot be undone.
+            This moves the {formatINR(transaction.amount)} transaction at{" "}
+            {transaction.merchant} to Ignored. It won&apos;t be imported again
+            and can be restored for 30 days.
           </span>
         </div>
         <div className="flex gap-2">

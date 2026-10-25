@@ -1,4 +1,4 @@
-import { google as googleapis, type gmail_v1 } from "googleapis";
+import type { gmail_v1 } from "googleapis";
 import { generateObject } from "ai";
 import { extractionModel } from "@/lib/ai";
 import { prisma } from "@/lib/prisma";
@@ -6,6 +6,10 @@ import { buildCategoryPromptText, DEFAULT_CATEGORIES } from "@/lib/categories";
 import { emailBodySnippet, buildEmailText } from "@/lib/email";
 import { transactionSchema } from "@/lib/schemas";
 import { resolveTransactionDate } from "@/lib/date-extraction";
+import { ignoredDayRange } from "@/lib/ignore";
+import { createGmailClient, markMessagesRead } from "@/lib/gmail";
+
+export { createGmailClient };
 
 /**
  * Shared Gmail → AI → DB pipeline used by the cron route and the chunked
@@ -109,20 +113,6 @@ export async function getCategoryPromptText(): Promise<string> {
   );
 }
 
-export function createGmailClient(): gmail_v1.Gmail {
-  const oauth2Client = new googleapis.auth.OAuth2(
-    process.env.GMAIL_CLIENT_ID,
-    process.env.GMAIL_CLIENT_SECRET,
-    "https://developers.google.com/oauthplayground"
-  );
-
-  oauth2Client.setCredentials({
-    refresh_token: process.env.GMAIL_REFRESH_TOKEN,
-  });
-
-  return googleapis.gmail({ version: "v1", auth: oauth2Client });
-}
-
 export function resolveSearchQuery(override?: string | null): string {
   return (
     override?.trim() || process.env.GMAIL_SEARCH_QUERY || BANK_EMAIL_QUERY
@@ -166,6 +156,7 @@ export type EntryStatus =
   | "duplicate_skipped"
   | "duplicate_flagged"
   | "junk_skipped"
+  | "ignored_skipped"
   | "would_save"
   | "would_skip_junk"
   | "would_flag_duplicate";
@@ -199,6 +190,7 @@ export interface ProcessedError {
 
 export type ProcessOneOutcome =
   | { kind: "duplicate_skipped"; entry?: ProcessedEntry }
+  | { kind: "ignored"; entry: ProcessedEntry }
   | { kind: "junk"; entry: ProcessedEntry }
   | { kind: "processed"; entry: ProcessedEntry }
   | { kind: "error"; error: ProcessedError };
@@ -292,6 +284,51 @@ async function findDuplicate(amount: number, merchant: string, date: Date) {
   });
 }
 
+async function findIgnoredFingerprint(
+  amount: number,
+  merchant: string,
+  date: Date
+) {
+  return prisma.ignoredTransaction.findFirst({
+    where: {
+      match_fingerprint: true,
+      amount,
+      merchant: { equals: merchant, mode: "insensitive" },
+      date: ignoredDayRange(date),
+    },
+  });
+}
+
+function ignoredEntry(
+  messageId: string,
+  ignored: {
+    amount: number;
+    merchant: string;
+    date: Date;
+    category: string;
+    is_cc_payment: boolean;
+  },
+  reason: string
+): ProcessedEntry {
+  return {
+    email_id: messageId,
+    email_url: gmailWebUrl(messageId),
+    from: "",
+    subject: "",
+    parsed: {
+      amount: ignored.amount,
+      merchant: ignored.merchant,
+      date: ignored.date.toISOString(),
+      category: ignored.category,
+      subcategory: null,
+      is_cc_payment: ignored.is_cc_payment,
+      confidence_score: 0,
+    },
+    status: "ignored_skipped",
+    reason,
+  };
+}
+
 /**
  * Process a single Gmail message end to end. Safe to retry: writes are
  * idempotent on `email_message_id`, so a timed-out request that is re-claimed
@@ -305,11 +342,14 @@ export async function processOneEmail({
   includeAlreadyProcessed = false,
 }: ProcessOneOptions): Promise<ProcessOneOutcome> {
   try {
-    const [alreadyProcessed, alreadySkipped] = await Promise.all([
+    const [alreadyProcessed, alreadySkipped, alreadyIgnored] = await Promise.all([
       prisma.transaction.findUnique({
         where: { email_message_id: messageId },
       }),
       prisma.skippedEmail.findUnique({
+        where: { email_message_id: messageId },
+      }),
+      prisma.ignoredTransaction.findUnique({
         where: { email_message_id: messageId },
       }),
     ]);
@@ -320,6 +360,18 @@ export async function processOneEmail({
         entry: includeAlreadyProcessed
           ? duplicateEntry(messageId, alreadyProcessed, alreadySkipped)
           : undefined,
+      };
+    }
+
+    if (alreadyIgnored) {
+      if (!dryRun) await markMessagesRead(gmail, [messageId]);
+      return {
+        kind: "ignored",
+        entry: ignoredEntry(
+          messageId,
+          alreadyIgnored,
+          "Previously deleted by user — ignored until the tombstone expires"
+        ),
       };
     }
 
@@ -390,6 +442,24 @@ export async function processOneEmail({
     }
 
     const txDate = resolveTransactionDate(transaction.date, body);
+
+    const ignoredFingerprint = await findIgnoredFingerprint(
+      transaction.amount,
+      transaction.merchant,
+      txDate
+    );
+    if (ignoredFingerprint) {
+      if (!dryRun) await markMessagesRead(gmail, [messageId]);
+      return {
+        kind: "ignored",
+        entry: ignoredEntry(
+          messageId,
+          ignoredFingerprint,
+          `Matches ignored transaction ${ignoredFingerprint.id} (same amount, merchant and date)`
+        ),
+      };
+    }
+
     const duplicate = await findDuplicate(
       transaction.amount,
       transaction.merchant,
