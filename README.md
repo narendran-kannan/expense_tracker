@@ -1,6 +1,6 @@
 # Expense Tracker
 
-A personal expense tracking dashboard that automatically parses Indian bank alert emails using Gmail API and Google Gemini AI to extract and categorize debit transactions.
+A personal expense tracking dashboard that automatically parses Indian bank alert emails using Gmail API and OpenRouter-hosted AI models to extract and categorize debit transactions.
 
 Built with Next.js 16, React 19, Prisma, and Tailwind CSS.
 
@@ -8,7 +8,7 @@ Built with Next.js 16, React 19, Prisma, and Tailwind CSS.
 
 ## Features
 
-- **Automatic email parsing** — Fetches bank alert emails from Gmail and extracts transactions using Gemini AI with structured output
+- **Automatic email parsing** — Fetches bank alert emails from Gmail and extracts transactions using AI with structured output
 - **AI-powered categorization** — Transactions are automatically categorized into 13 default categories with confidence scoring
 - **Review workflow** — Low-confidence extractions (< 80%) are flagged for manual review with approve/edit/delete actions
 - **Manual entry** — Add transactions manually when needed
@@ -35,7 +35,7 @@ You can add support for other banks by setting the `GMAIL_SEARCH_QUERY` environm
 - **Framework**: Next.js 16 (App Router, Server Components, Server Actions)
 - **Language**: TypeScript (strict mode)
 - **Database**: PostgreSQL via Prisma 7
-- **AI**: Google Gemini 2.5 Flash via Vercel AI SDK
+- **AI**: OpenRouter with DeepSeek extraction and Gemini insights via Vercel AI SDK
 - **Email**: Gmail API (OAuth 2.0)
 - **Auth**: NextAuth v5 (credentials provider)
 - **UI**: Tailwind CSS 4, shadcn/ui, Recharts, Lucide icons
@@ -48,7 +48,7 @@ You can add support for other banks by setting the `GMAIL_SEARCH_QUERY` environm
 - Node.js 24 (see `.nvmrc` or `mise.toml`)
 - PostgreSQL database
 - Google Cloud project with Gmail API enabled
-- Gemini API key
+- OpenRouter API key
 
 ### 1. Clone and install
 
@@ -58,7 +58,7 @@ cd expense-tracker
 npm install
 ```
 
-If you use [mise](https://mise.jdx.dev/), run `mise install` to get Node 24 from `mise.toml`; otherwise use `.nvmrc` or your version manager.
+If you use [mise](https://mise.jdx.dev/), run `mise install` to get Node 24 from `mise.toml`; otherwise use `.nvmrc` or your version manager. mise also loads `.env` for mise-managed shells and provides `mise run check` (lint + type-check + tests).
 
 ### 2. Configure environment variables
 
@@ -95,14 +95,14 @@ npm run db:sync-categories
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and log in with your `AUTH_PASSWORD`.
+Open [http://localhost:3003](http://localhost:3003) and log in with your `AUTH_PASSWORD`.
 
 ### 5. Seed sample data (optional)
 
 Click the "Seed Sample Data" button on the dashboard in development mode, or run:
 
 ```bash
-curl -X POST http://localhost:3000/api/seed
+curl -X POST http://localhost:3003/api/seed
 ```
 
 ## Email Processing
@@ -111,7 +111,7 @@ The `/api/process-emails` endpoint fetches and parses bank alert emails. You can
 
 **Manually (dev):**
 ```bash
-curl http://localhost:3000/api/process-emails
+curl http://localhost:3003/api/process-emails
 ```
 
 **As a cron job (production):**

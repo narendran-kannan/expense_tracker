@@ -1,2 +1,11 @@
 [tools]
 node = "24"
+
+[env]
+# Load local config for mise-managed shells and tasks. Missing files are
+# ignored, so a fresh clone still works before `cp .env.example .env`.
+_.file = ".env"
+
+[tasks.check]
+description = "Lint, type-check and run the test suite"
+run = "npm run lint && npx tsc --noEmit && npm test"

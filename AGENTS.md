@@ -23,6 +23,7 @@ npm run test:watch                   # vitest watch
 npx vitest run src/lib/email.test.ts # single file
 npx vitest run -t "parses dd-Mon"    # by test name
 npx tsc --noEmit                     # type check (no script — run directly)
+mise run check                       # lint + tsc + test (mise users)
 
 npm run db:push                      # dev: sync schema without migration
 npm run db:migrate                   # prisma migrate dev (create migration)

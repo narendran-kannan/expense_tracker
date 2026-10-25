@@ -38,6 +38,12 @@ yarn-error.log*
 .env.production.local
 !.env.example
 
+# mise local overrides (the tracked mise.toml is shared)
+mise.local.toml
+mise.*.local.toml
+.mise.local.toml
+.mise.*.local.toml
+
 # vercel
 .vercel
 
